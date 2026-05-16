@@ -4,6 +4,7 @@ add_executable(unit_tests
     test_stencils.cpp
     test_bc.cpp
     test_advect_smooth.cpp
+    test_sod_1d.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

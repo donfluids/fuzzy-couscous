@@ -43,7 +43,9 @@ add_library(blast_core STATIC
     src/bc/BC.cpp
     src/numerics/RHS.cpp
     src/numerics/RK3.cpp
+    src/numerics/Ducros.cpp
     src/ic/Canonical.cpp
+    src/physics/RiemannExact.cpp
 )
 target_include_directories(blast_core PUBLIC
     src

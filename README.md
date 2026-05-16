@@ -4,8 +4,8 @@ Compressible LES solver for blast-induced turbulence in closed chambers.
 
 Built clean-room to address the peer-review revisions of *Daniel (2025), Blast
 induced turbulence in closed chambers*. Targets a single-node AMD EPYC 9965
-(192 cores, 256 GB RAM); C++20 + OpenMP, 6th-order central + Cook (2007)
-artificial fluid properties, SSP-RK3.
+(192 cores, 256 GB RAM); C++20 + OpenMP, SSP-RK3, hybrid 6th-order central /
+5th-order WENO with Ducros sensor (no per-problem coefficient tuning).
 
 ## Layout
 
@@ -35,7 +35,8 @@ toml++, GoogleTest, OpenMP.
 |------:|-----------|--------|
 | 0 | CMake / Field3D / Config / Log | ✅ |
 | 1 | 6th-order stencils, Euler flux, SSP-RK3, BCs (periodic/outflow/slip) | ✅ |
-| 1 | AFP shock capture, 1D Sod + Shu-Osher gates | ⏳ |
+| 1 | Hybrid central / WENO5 + Ducros, 1D Sod validation (positivity + L1 + refinement) | ✅ |
+| 1 | Shu-Osher gate | ⏳ |
 | 2 | 3D Sedov–Taylor verification | ⏳ |
 | 3 | Viscous fluxes + MMS convergence | ⏳ |
 | 4 | FFT spectra, Helmholtz split, energy budget | ⏳ |

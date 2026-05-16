@@ -8,6 +8,7 @@ add_executable(unit_tests
     test_sedov_3d.cpp
     test_viscous_mms.cpp
     test_spectra.cpp
+    test_statistics.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

@@ -49,6 +49,7 @@ add_library(blast_core STATIC
     src/physics/RiemannExact.cpp
     src/diagnostics/FFT.cpp
     src/diagnostics/Spectra.cpp
+    src/diagnostics/Statistics.cpp
 )
 target_include_directories(blast_core PUBLIC
     src

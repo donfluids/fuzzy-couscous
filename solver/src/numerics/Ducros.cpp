@@ -1,11 +1,34 @@
 #include "numerics/Ducros.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <omp.h>
 
 namespace blast {
 
-void compute_ducros(const State& U, const Grid& g, Field3D& theta) {
+namespace {
+
+// Map relative pressure jump |dp|/(p+p) onto [0,1] with a smooth ramp so that
+// jumps >~ 10% saturate near 1, putting the cell solidly above the WENO
+// activation threshold (0.65).
+inline Real pressure_indicator(Real dp_over_psum) {
+    constexpr Real k = 10.0;          // ramp slope
+    return std::tanh(k * dp_over_psum);
+}
+
+inline Real pressure_at(const State& U, const IdealGas& eos, int i, int j, int k) {
+    const Real r = U[RHO ](i, j, k);
+    const Real u = U[RHOU](i, j, k) / r;
+    const Real v = U[RHOV](i, j, k) / r;
+    const Real w = U[RHOW](i, j, k) / r;
+    const Real ke = 0.5 * r * (u * u + v * v + w * w);
+    return eos.pressure(r, U[RHOE](i, j, k) - ke);
+}
+
+}  // namespace
+
+void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
+                    Field3D& theta) {
     const int nx = g.nx, ny = g.ny, nz = g.nz;
     const Real inv_2dx = 1.0 / (2.0 * g.dx());
     const Real inv_2dy = (ny > 1) ? 1.0 / (2.0 * g.dy()) : 0.0;
@@ -16,7 +39,16 @@ void compute_ducros(const State& U, const Grid& g, Field3D& theta) {
     const auto& my  = U[RHOV];
     const auto& mz  = U[RHOW];
 
-    constexpr Real EPS_S = 1e-30;
+    // Floor on the Ducros denominator. A flat uniform velocity field has
+    // div = omega = 0 to round-off; without a physically scaled floor the
+    // ratio div^2/(div^2+omega^2) saturates near 1 at numerical noise.
+    // Floor = eps_rel * (c_ref / dx)^2 puts the floor at the scale of a
+    // physical gradient across one cell. Following Pirozzoli & Bernardini
+    // (JFM 2014).
+    constexpr Real EPS_REL = 1e-6;
+    const Real dx_min = std::min({g.dx(),
+                                  (ny > 1 ? g.dy() : 1e30),
+                                  (nz > 1 ? g.dz() : 1e30)});
 
     auto vel_at = [&](int i, int j, int k, Real& u, Real& v, Real& w) {
         const Real r = rho(i, j, k);
@@ -25,8 +57,6 @@ void compute_ducros(const State& U, const Grid& g, Field3D& theta) {
         w = mz(i, j, k) / r;
     };
 
-    // Compute sensor on interior + 1 ghost ring (so face-based dispatch can
-    // read theta on both sides of every face up to the domain boundary).
 #pragma omp parallel for collapse(2) schedule(static)
     for (int k = -1; k < nz + 1; ++k)
         for (int j = -1; j < ny + 1; ++j)
@@ -34,7 +64,6 @@ void compute_ducros(const State& U, const Grid& g, Field3D& theta) {
                 Real u_xm, v_xm, w_xm, u_xp, v_xp, w_xp;
                 vel_at(i - 1, j, k, u_xm, v_xm, w_xm);
                 vel_at(i + 1, j, k, u_xp, v_xp, w_xp);
-
                 Real du_dx = (u_xp - u_xm) * inv_2dx;
                 Real dv_dx = (v_xp - v_xm) * inv_2dx;
                 Real dw_dx = (w_xp - w_xm) * inv_2dx;
@@ -59,15 +88,30 @@ void compute_ducros(const State& U, const Grid& g, Field3D& theta) {
                 }
 
                 const Real div = du_dx + dv_dy + dw_dz;
-
-                // Vorticity components.
                 const Real ox = dw_dy - dv_dz;
                 const Real oy = du_dz - dw_dx;
                 const Real oz = dv_dx - du_dy;
                 const Real om2 = ox * ox + oy * oy + oz * oz;
-
                 const Real div2 = div * div;
-                theta(i, j, k) = div2 / (div2 + om2 + EPS_S);
+                const Real pc_local = pressure_at(U, eos, i, j, k);
+                const Real c_local  = eos.sound_speed(rho(i, j, k), pc_local);
+                const Real eps_floor = EPS_REL * (c_local / dx_min) * (c_local / dx_min);
+                const Real phi_v = div2 / (div2 + om2 + eps_floor);
+
+                // Pressure-jump indicator: maximum normalized neighbor jump.
+                const Real pc = pc_local;
+                Real max_jump = 0.0;
+                auto consider = [&](int ii, int jj, int kk) {
+                    const Real pn = pressure_at(U, eos, ii, jj, kk);
+                    const Real j_ratio = std::fabs(pn - pc) / (pn + pc + 1e-30);
+                    if (j_ratio > max_jump) max_jump = j_ratio;
+                };
+                consider(i - 1, j, k); consider(i + 1, j, k);
+                if (ny > 1) { consider(i, j - 1, k); consider(i, j + 1, k); }
+                if (nz > 1) { consider(i, j, k - 1); consider(i, j, k + 1); }
+                const Real phi_p = pressure_indicator(max_jump);
+
+                theta(i, j, k) = std::max(phi_v, phi_p);
             }
 }
 

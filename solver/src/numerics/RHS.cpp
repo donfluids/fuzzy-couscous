@@ -14,7 +14,8 @@ namespace blast {
 
 namespace {
 
-// Ducros activation threshold: switch to WENO5 when sensor exceeds this.
+// Switch to WENO5 when the sensor exceeds this threshold anywhere in the
+// face stencil. 0.65 follows Pirozzoli, Larsson, Bernardini.
 constexpr Real kSensorThreshold = 0.65;
 
 // Per-cell scratch: 5 conserved-flux components evaluated at cell centers,
@@ -128,6 +129,47 @@ inline Real face_flux(const Real* Fptr, const Real* Uptr, Real alpha_face,
     return hp + hm;
 }
 
+// Dilate theta along direction d with a half-width-2 max filter.
+// After this, theta_dilated(c) = max(theta_orig over [c-2, c+2] along d).
+// Combined with checking both cells of a face, the central6 stencil
+// (cells c-2..c+3 around the left cell) is fully covered.
+void dilate_sensor_along(Field3D& theta, int d) {
+    const int nx = theta.nx(), ny = theta.ny(), nz = theta.nz(), ng = theta.ng();
+    Field3D scratch(nx, ny, nz, ng);
+
+    // Read theta on interior + ng-1 ghost layer, write into scratch.
+    const int lo = -(ng - 1);
+    const auto read_safe = [&](int i, int j, int k) {
+        // Clamp to where theta is computed (interior + 1 ghost), elsewhere 0.
+        if (i < -1 || i > nx) return 0.0;
+        if (j < -1 || j > ny) return 0.0;
+        if (k < -1 || k > nz) return 0.0;
+        return static_cast<Real>(theta(i, j, k));
+    };
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = lo; k < nz + ng - 1; ++k)
+        for (int j = lo; j < ny + ng - 1; ++j)
+            for (int i = lo; i < nx + ng - 1; ++i) {
+                Real m = 0.0;
+                for (int s = -2; s <= 2; ++s) {
+                    int ii = i, jj = j, kk = k;
+                    if (d == 0) ii = i + s;
+                    if (d == 1) jj = j + s;
+                    if (d == 2) kk = k + s;
+                    m = std::max(m, read_safe(ii, jj, kk));
+                }
+                scratch(i, j, k) = m;
+            }
+
+    // Copy scratch back into theta (whole region).
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = lo; k < nz + ng - 1; ++k)
+        for (int j = lo; j < ny + ng - 1; ++j)
+            for (int i = lo; i < nx + ng - 1; ++i)
+                theta(i, j, k) = scratch(i, j, k);
+}
+
 void add_face_flux_divergence(const State& U, const State& Flux,
                               const Field3D& alpha, const Field3D& theta,
                               int d, Real inv_dh, State& Rhs) {
@@ -142,21 +184,20 @@ void add_face_flux_divergence(const State& U, const State& Flux,
         for (int k = 0; k < nz; ++k)
             for (int j = 0; j < ny; ++j) {
                 for (int i = 0; i < nx; ++i) {
-                    // Sensor at face i-1/2: max of theta on the two cells.
                     int im = (d == 0 ? i - 1 : i);
                     int jm = (d == 1 ? j - 1 : j);
                     int km = (d == 2 ? k - 1 : k);
-                    const Real th_lo_minus = theta(im, jm, km);
-                    const Real th_lo_plus  = theta(i,  j,  k );
-                    const bool weno_lo = (std::max(th_lo_minus, th_lo_plus) > kSensorThreshold);
-
-                    // Sensor at face i+1/2.
                     int ip = (d == 0 ? i + 1 : i);
                     int jp = (d == 1 ? j + 1 : j);
                     int kp = (d == 2 ? k + 1 : k);
-                    const Real th_hi_minus = theta(i,  j,  k );
-                    const Real th_hi_plus  = theta(ip, jp, kp);
-                    const bool weno_hi = (std::max(th_hi_minus, th_hi_plus) > kSensorThreshold);
+
+                    // theta has been dilated along d with half-width 2, so
+                    // max over both adjacent cells covers the full central6
+                    // stencil footprint.
+                    const Real th_lo = std::max(theta(im, jm, km), theta(i,  j,  k ));
+                    const Real th_hi = std::max(theta(i,  j,  k ), theta(ip, jp, kp));
+                    const bool weno_lo = th_lo > kSensorThreshold;
+                    const bool weno_hi = th_hi > kSensorThreshold;
 
                     const Real alpha_lo = std::max(alpha(im, jm, km), alpha(i,  j,  k ));
                     const Real alpha_hi = std::max(alpha(i,  j,  k ), alpha(ip, jp, kp));
@@ -183,22 +224,30 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
     for (int v = 0; v < NCONS; ++v) Rhs.fill(v, 0.0);
 
     Field3D theta(U.nx(), U.ny(), U.nz(), U.ng());
-    compute_ducros(U, g, theta);
+    compute_sensor(U, g, eos, theta);
 
     State Flux(U.nx(), U.ny(), U.nz(), U.ng());
     Field3D alpha(U.nx(), U.ny(), U.nz(), U.ng());
 
-    fill_flux_and_alpha(U, 0, eos, Flux, alpha);
-    add_face_flux_divergence(U, Flux, alpha, theta, 0, 1.0 / g.dx(), Rhs);
+    // Per direction: dilate the sensor along d so the face dispatch covers the
+    // full central6 stencil footprint, then compute fluxes and accumulate.
+    Field3D theta_dil(U.nx(), U.ny(), U.nz(), U.ng());
 
-    if (U.ny() > 1) {
-        fill_flux_and_alpha(U, 1, eos, Flux, alpha);
-        add_face_flux_divergence(U, Flux, alpha, theta, 1, 1.0 / g.dy(), Rhs);
-    }
-    if (U.nz() > 1) {
-        fill_flux_and_alpha(U, 2, eos, Flux, alpha);
-        add_face_flux_divergence(U, Flux, alpha, theta, 2, 1.0 / g.dz(), Rhs);
-    }
+    auto run_direction = [&](int d, Real inv_h) {
+        // Reset dilated sensor to original, then dilate along d.
+        const int ng = theta.ng();
+        const Index N = theta.ldx() * (theta.ny() + 2 * ng) * (theta.nz() + 2 * ng);
+#pragma omp parallel for schedule(static)
+        for (Index i = 0; i < N; ++i) theta_dil.raw()[i] = theta.raw()[i];
+        dilate_sensor_along(theta_dil, d);
+
+        fill_flux_and_alpha(U, d, eos, Flux, alpha);
+        add_face_flux_divergence(U, Flux, alpha, theta_dil, d, inv_h, Rhs);
+    };
+
+    run_direction(0, 1.0 / g.dx());
+    if (U.ny() > 1) run_direction(1, 1.0 / g.dy());
+    if (U.nz() > 1) run_direction(2, 1.0 / g.dz());
 }
 
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,

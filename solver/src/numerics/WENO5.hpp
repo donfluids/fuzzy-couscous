@@ -98,13 +98,20 @@ inline Real reconstruct_right(const Real* __restrict__ v, Index stride) {
     return w0 * p0 + w1 * p1 + w2 * p2;
 }
 
-// 6th-order central face interpolation:  f_{i+1/2} using v[i-2..i+3].
-// Coefficients derived from Vandermonde of polynomials up to degree 5 on
-// cell centers at half-integer offsets from the face.
+// 6th-order central face reconstruction for the Shu finite-difference
+// framework (Shu 1998, eq. 2.11): the cell values F_i are interpreted as
+// cell averages of an implicit h(x), and h_{i+1/2} is recovered with the
+// standard 6-point symmetric stencil. With this operator,
+// (h_{i+1/2} - h_{i-1/2}) / dx is the high-order discrete approximation
+// to dF/dx at cell i.
+//
+// Coefficients on f_{i-2}, f_{i-1}, f_i, f_{i+1}, f_{i+2}, f_{i+3} are
+// 1/60, -8/60, 37/60, 37/60, -8/60, 1/60. NB these are NOT the point-value
+// polynomial face-interpolation coefficients (150/256, ...).
 inline Real reconstruct_central6(const Real* __restrict__ v, Index stride) {
-    constexpr Real c0 = 150.0 / 256.0;   // inner pair (v_i, v_{i+1})
-    constexpr Real c1 = -25.0 / 256.0;   // mid   pair (v_{i-1}, v_{i+2})
-    constexpr Real c2 =   3.0 / 256.0;   // outer pair (v_{i-2}, v_{i+3})
+    constexpr Real c0 = 37.0 / 60.0;   // inner pair (v_i, v_{i+1})
+    constexpr Real c1 = -8.0 / 60.0;   // mid   pair (v_{i-1}, v_{i+2})
+    constexpr Real c2 =  1.0 / 60.0;   // outer pair (v_{i-2}, v_{i+3})
     return c0 * (v[0]            + v[ 1 * stride])
          + c1 * (v[-1 * stride]  + v[ 2 * stride])
          + c2 * (v[-2 * stride]  + v[ 3 * stride]);

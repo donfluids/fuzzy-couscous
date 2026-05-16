@@ -9,6 +9,7 @@
 #include "io/HDF5Writer.hpp"
 #include "io/Log.hpp"
 #include "io/Restart.hpp"
+#include "numerics/Filter.hpp"
 #include "numerics/RHS.hpp"
 #include "numerics/RK3.hpp"
 #include "physics/EOS.hpp"
@@ -186,6 +187,11 @@ int main(int argc, char** argv) {
         driver.step(U, c.grid, bc, eos, vp, dt);
         t += dt;
         ++step;
+
+        if (c.filter.enabled && c.filter.every > 0
+            && step % c.filter.every == 0) {
+            apply_lele_filter(U, bc, c.filter.sigma);
+        }
 
         if (step % c.output.stats_every == 0)
             write_diagnostics(step, t, dt);

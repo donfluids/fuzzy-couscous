@@ -45,6 +45,17 @@ t_end          = 12.0            # well past peak dissipation at t ~ 9
 dt_max         = 1.0
 max_steps      = 200000
 
+# Periodic 6th-order Lele low-pass filter -- the canonical stability
+# device for central-scheme LES on under-resolved Kolmogorov cascades.
+# Without this, smooth-region energy that "wants" to cascade past k_max
+# instead reflects off Nyquist and accumulates, contaminating the inertial
+# range and (eventually) blowing the simulation up. Sigma 0.1-0.2 every
+# 5-10 steps is the standard Visbal-Gaitonde 2002 recipe.
+[filter]
+enabled = true
+every   = 5
+sigma   = 0.15
+
 [output]
 out_dir          = "out_tgv_re1600"
 snapshot_every   = 600           # ~5 snapshots

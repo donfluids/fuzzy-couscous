@@ -104,6 +104,11 @@ Config load_config(const std::string& path) {
     c.time.dt_max         = pick<double>(t["dt_max"],  c.time.dt_max);
     c.time.max_steps      = pick<int64_t>(t["max_steps"], c.time.max_steps);
 
+    auto fl = tbl["filter"];
+    c.filter.enabled = pick<bool>(fl["enabled"], c.filter.enabled);
+    c.filter.every   = pick<int64_t>(fl["every"], c.filter.every);
+    c.filter.sigma   = pick<double>(fl["sigma"], c.filter.sigma);
+
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
     c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);

@@ -37,6 +37,17 @@ struct TimeConfig {
     int  max_steps      = 1'000'000;
 };
 
+struct FilterConfig {
+    // 6th-order Lele explicit low-pass filter applied every `every` steps to
+    // each conserved variable (interior + 3 ghost cells per face). Strength
+    // sigma in [0, 1]: U_new = (1 - sigma) U + sigma F(U). For LES of
+    // isotropic turbulence on under-resolved grids, sigma ~ 0.1-0.25 every
+    // 5-10 steps is the standard recipe (Visbal & Gaitonde 2002).
+    bool enabled = false;
+    int  every   = 0;
+    Real sigma   = 0.2;
+};
+
 struct BCSet {
     BCType xlo = BCType::Periodic, xhi = BCType::Periodic;
     BCType ylo = BCType::Periodic, yhi = BCType::Periodic;
@@ -84,6 +95,7 @@ struct Config {
     PhysicsConfig  physics;
     AFPConfig      afp;
     TimeConfig     time;
+    FilterConfig   filter;
     OutputConfig   output;
     std::string    run_name = "run";
 };

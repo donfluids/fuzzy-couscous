@@ -35,4 +35,26 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
     state_axpbypcz(U, 1.0 / 3.0, U, 2.0 / 3.0, U1_, 2.0 / 3.0 * dt, k_);
 }
 
+void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,
+                           const IdealGas& eos, const ViscousParams& vp,
+                           Real dt, Real t_current, const SourceCallback& src) {
+    auto eval_rhs = [&](const State& Uin, Real t_stage) {
+        compute_rhs_inviscid(Uin, g, eos, k_);
+        if (vp.mu > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
+        if (src) src(k_, g, t_stage);
+    };
+
+    apply_bcs(U, bc);
+    eval_rhs(U, t_current);
+    state_axpby(U1_, 1.0, U, dt, k_);
+
+    apply_bcs(U1_, bc);
+    eval_rhs(U1_, t_current + dt);
+    state_axpbypcz(U1_, 3.0 / 4.0, U, 1.0 / 4.0, U1_, dt / 4.0, k_);
+
+    apply_bcs(U1_, bc);
+    eval_rhs(U1_, t_current + 0.5 * dt);
+    state_axpbypcz(U, 1.0 / 3.0, U, 2.0 / 3.0, U1_, 2.0 / 3.0 * dt, k_);
+}
+
 }  // namespace blast

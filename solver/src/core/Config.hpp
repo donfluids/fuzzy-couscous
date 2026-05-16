@@ -59,6 +59,12 @@ struct ICParams {
     Real cbc_urms    = 1.0;
     Real cbc_k_peak  = 4.0;
     int  cbc_seed    = 12345;
+    // Ensemble support: when ensemble_amp > 0, sphere_blast / cj_detonation
+    // ICs add a random multi-mode angular perturbation drawn from this seed
+    // on top of the Y_{4,2} pattern.  Different seeds -> distinguishable
+    // realizations of the same physical setup (reviewer M6).
+    Real ensemble_amp  = 0.0;
+    int  ensemble_seed = 0;
 };
 
 struct OutputConfig {

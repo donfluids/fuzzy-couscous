@@ -35,7 +35,8 @@ void ic_taylor_green_3d(State& U, const Grid& g, const IdealGas& eos,
 void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real rho_blast, Real T_blast,
                         Real rho_ambient, Real T_ambient,
-                        Real r_blast, Real tanh_thickness, Real Y42_amp);
+                        Real r_blast, Real tanh_thickness, Real Y42_amp,
+                        Real ensemble_amp = 0.0, int ensemble_seed = 0);
 
 // Chapman-Jouguet detonation initial condition (addresses reviewer M9).
 // At t=0 a spherical region of radius `r_cj` contains gas in the CJ state

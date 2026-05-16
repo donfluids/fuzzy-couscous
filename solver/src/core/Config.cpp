@@ -80,6 +80,8 @@ Config load_config(const std::string& path) {
     c.ic.cbc_urms       = pick<double>(ic["cbc_urms"], c.ic.cbc_urms);
     c.ic.cbc_k_peak     = pick<double>(ic["cbc_k_peak"], c.ic.cbc_k_peak);
     c.ic.cbc_seed       = pick<int64_t>(ic["cbc_seed"], c.ic.cbc_seed);
+    c.ic.ensemble_amp   = pick<double>(ic["ensemble_amp"], c.ic.ensemble_amp);
+    c.ic.ensemble_seed  = pick<int64_t>(ic["ensemble_seed"], c.ic.ensemble_seed);
 
     auto ph = tbl["physics"];
     c.physics.eos.gamma  = pick<double>(ph["gamma"],  c.physics.eos.gamma);

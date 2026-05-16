@@ -1,0 +1,52 @@
+# Template for ensemble runs. Override ensemble_seed + out_dir + run_name
+# per realization. With ensemble_amp = 0.05, the sphere radius gets random
+# multi-mode angular perturbations of ~5%, giving statistically distinct
+# realizations from the same physical configuration.
+run_name = "chamber_ens_REPLACEME"
+
+[grid]
+nx = 32
+ny = 32
+nz = 32
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.1
+rho_B          = 10.0
+T_B            = 100.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2
+tanh_thickness = 0.047
+ensemble_amp   = 0.05
+ensemble_seed  = 0     # override per realization
+
+[physics]
+gamma = 1.4
+R     = 1.0
+
+[time]
+cfl_hyperbolic = 0.3
+t_end          = 0.15
+max_steps      = 3000
+
+[output]
+out_dir         = "out_chamber_ens_REPLACEME"
+snapshot_every  = 100000     # snapshots off for ensemble runs
+stats_every     = 5
+write_spectra   = false
+write_helmholtz = true

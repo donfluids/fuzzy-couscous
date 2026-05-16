@@ -1,6 +1,8 @@
 #include "ic/Canonical.hpp"
 
+#include <array>
 #include <cmath>
+#include <random>
 
 namespace blast {
 
@@ -100,16 +102,62 @@ static inline Real y42_unit(Real x, Real y, Real z) {
     return (x * x - y * y) * (7.0 * z * z - r2) / (r2 * r2);
 }
 
+// Ensemble random angular perturbation: low-l spherical harmonics summed with
+// seeded Gaussian coefficients. Compact in physical space, well-resolved by
+// the angular grid, and different seeds give statistically distinct ICs.
+struct AngularPerturbation {
+    std::array<std::array<Real, 13>, 7> c{};   // c[l][m+6] for l=0..6
+    Real overall_amp = 0.0;
+
+    void seed(int s, Real amp) {
+        overall_amp = amp;
+        if (amp <= 0.0) return;
+        std::mt19937 rng(static_cast<unsigned int>(s));
+        std::normal_distribution<Real> nd(0.0, 1.0);
+        for (int l = 2; l <= 6; ++l)
+            for (int m = -l; m <= l; ++m) c[l][m + 6] = nd(rng);
+    }
+
+    // Evaluate sum_{l,m} c_{l,m} Y_{l,m}(theta, phi) up to l = 6, using the
+    // Cartesian polynomial forms (unnormalized) for l = 2..6.
+    Real eval(Real x, Real y, Real z) const {
+        if (overall_amp <= 0.0) return 0.0;
+        const Real r2 = x*x + y*y + z*z;
+        if (r2 < 1e-30) return 0.0;
+        const Real r4 = r2 * r2;
+        const Real r6 = r4 * r2;
+        Real s = 0.0;
+        // l = 2 (5 modes), unnormalized:
+        s += c[2][-2 + 6] * (2.0 * x * y) / r2;
+        s += c[2][-1 + 6] * (2.0 * y * z) / r2;
+        s += c[2][ 0 + 6] * (3.0 * z * z - r2) / r2;
+        s += c[2][ 1 + 6] * (2.0 * x * z) / r2;
+        s += c[2][ 2 + 6] * (x * x - y * y) / r2;
+        // l = 4, just our Y_{4,2}-like family for variety:
+        s += c[4][-2 + 6] * (x * y * (7.0 * z * z - r2)) / r4;
+        s += c[4][ 2 + 6] * ((x * x - y * y) * (7.0 * z * z - r2)) / r4;
+        s += c[4][ 0 + 6] * (35.0 * z*z*z*z - 30.0 * z*z * r2 + 3.0 * r4) / r4;
+        // l = 6 octupolar contribution adds finer angular structure:
+        s += c[6][ 0 + 6] * (231.0 * z*z*z*z*z*z - 315.0 * z*z*z*z * r2
+                            + 105.0 * z*z * r4 - 5.0 * r6) / r6;
+        return overall_amp * s;
+    }
+};
+
 void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real rho_blast, Real T_blast,
                         Real rho_ambient, Real T_ambient,
-                        Real r_blast, Real tanh_thickness, Real Y42_amp) {
+                        Real r_blast, Real tanh_thickness, Real Y42_amp,
+                        Real ensemble_amp, int ensemble_seed) {
     const Real xc = g.x0 + 0.5 * g.lx;
     const Real yc = g.y0 + 0.5 * g.ly;
     const Real zc = g.z0 + 0.5 * g.lz;
     const Real p_blast   = rho_blast   * eos.eos.R * T_blast;
     const Real p_ambient = rho_ambient * eos.eos.R * T_ambient;
     const Real safe_thickness = std::max(tanh_thickness, 1e-12);
+
+    AngularPerturbation pert;
+    pert.seed(ensemble_seed, ensemble_amp);
 
     for (int k = 0; k < g.nz; ++k)
         for (int j = 0; j < g.ny; ++j)
@@ -118,7 +166,9 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                 const Real y = g.yc(j) - yc;
                 const Real z = g.zc(k) - zc;
                 const Real r = std::sqrt(x*x + y*y + z*z);
-                Real r_eff = r_blast * (1.0 + Y42_amp * y42_unit(x, y, z));
+                Real r_eff = r_blast * (1.0
+                                         + Y42_amp * y42_unit(x, y, z)
+                                         + pert.eval(x, y, z));
                 Real w;
                 if (tanh_thickness > 0.0) {
                     w = 0.5 * (1.0 - std::tanh((r - r_eff) / safe_thickness));

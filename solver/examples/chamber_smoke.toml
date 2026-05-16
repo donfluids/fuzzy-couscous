@@ -1,0 +1,54 @@
+run_name = "chamber_smoke"
+
+[grid]
+nx = 32
+ny = 32
+nz = 32
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type    = "smooth_sphere"
+r0      = 0.1
+rho_B   = 10.0
+T_B     = 100.0
+rho_0   = 1.0
+T_0     = 1.0
+Y42_amp = 0.2
+tanh_thickness = 0.047   # ~ 1.5 dx
+
+[physics]
+gamma     = 1.4
+R         = 1.0       # nondimensional units; p = rho R T
+mu        = 0.0       # inviscid smoke run
+prandtl   = 0.71
+bulk_visc = 0.0
+
+[afp]
+enabled = false       # legacy field; superseded by hybrid central/WENO
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.3
+dt_max         = 1e30
+max_steps      = 5000
+
+[output]
+out_dir         = "out_chamber_smoke"
+snapshot_every  = 50
+stats_every     = 5
+write_spectra   = false
+write_helmholtz = true

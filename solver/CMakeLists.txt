@@ -50,6 +50,7 @@ add_library(blast_core STATIC
     src/diagnostics/FFT.cpp
     src/diagnostics/Spectra.cpp
     src/diagnostics/Statistics.cpp
+    src/io/HDF5Writer.cpp
 )
 target_include_directories(blast_core PUBLIC
     src
@@ -70,3 +71,6 @@ if(BUILD_TESTS)
     find_package(GTest REQUIRED)
     add_subdirectory(tests)
 endif()
+
+add_executable(blast_les src/main.cpp)
+target_link_libraries(blast_les PRIVATE blast_core)

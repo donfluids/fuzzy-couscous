@@ -7,6 +7,7 @@ add_executable(unit_tests
     test_sod_1d.cpp
     test_sedov_3d.cpp
     test_viscous_mms.cpp
+    test_spectra.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

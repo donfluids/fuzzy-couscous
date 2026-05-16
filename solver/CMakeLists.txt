@@ -47,6 +47,8 @@ add_library(blast_core STATIC
     src/numerics/Gradients.cpp
     src/ic/Canonical.cpp
     src/physics/RiemannExact.cpp
+    src/diagnostics/FFT.cpp
+    src/diagnostics/Spectra.cpp
 )
 target_include_directories(blast_core PUBLIC
     src

@@ -121,7 +121,13 @@ int main(int argc, char** argv) {
         auto s = velocity_stats(U, eos);
         auto b = dissipation_budget(U, c.grid, eos, vp);
         HelmholtzResult h{};
-        if (c.output.write_helmholtz) h = helmholtz_decompose(U, c.grid, fft);
+        ShellSpectrum sp{};
+        if (c.output.write_helmholtz || c.output.write_spectra)
+            h = helmholtz_decompose(U, c.grid, fft);
+        if (c.output.write_spectra) {
+            sp = velocity_spectrum(U, c.grid, fft);
+            writer.append_spectra(h, sp, t, step);
+        }
         log_row(stats_file, step, t, dt, s, b, h);
         stats_file.flush();
         BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "

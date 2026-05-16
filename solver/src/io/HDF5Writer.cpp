@@ -35,6 +35,17 @@ void write_scalar(hid_t file, const char* name, double value) {
     H5Sclose(space);
 }
 
+void write_dataset_1d(hid_t loc, const char* name,
+                      const std::vector<double>& data) {
+    hsize_t dims = data.size();
+    hid_t space = H5Screate_simple(1, &dims, nullptr);
+    hid_t dset  = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
+                             H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data.data());
+    H5Dclose(dset);
+    H5Sclose(space);
+}
+
 }  // namespace
 
 HDF5Writer::HDF5Writer(const std::string& out_dir, const std::string& run_name)
@@ -98,6 +109,35 @@ void HDF5Writer::write_snapshot(const State& U, const Grid& g,
 
     entries_.emplace_back(step, t);
     update_xdmf_index_();
+}
+
+void HDF5Writer::append_spectra(const HelmholtzResult& h,
+                                const ShellSpectrum& total,
+                                Real t, int step) {
+    const std::string path = out_dir_ + "/" + run_name_ + "_spectra.h5";
+    hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+    if (file < 0) {
+        file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    }
+    if (file < 0) {
+        BLAST_ERROR("HDF5: failed to open or create {}", path);
+        return;
+    }
+    char group_name[64];
+    std::snprintf(group_name, sizeof(group_name), "/step_%06d", step);
+    hid_t grp = H5Gcreate2(file, group_name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    write_scalar(grp, "time", t);
+
+    auto to_vec = [](const std::vector<Real>& v) {
+        return std::vector<double>(v.begin(), v.end());
+    };
+    write_dataset_1d(grp, "k",       to_vec(total.k));
+    write_dataset_1d(grp, "E_total", to_vec(total.E));
+    write_dataset_1d(grp, "E_sol",   to_vec(h.E_sol.E));
+    write_dataset_1d(grp, "E_dil",   to_vec(h.E_dil.E));
+
+    H5Gclose(grp);
+    H5Fclose(file);
 }
 
 void HDF5Writer::update_xdmf_index_() {

@@ -2,6 +2,7 @@
 
 #include "core/Grid.hpp"
 #include "core/State.hpp"
+#include "diagnostics/Spectra.hpp"
 #include "physics/EOS.hpp"
 
 #include <string>
@@ -19,6 +20,11 @@ public:
     HDF5Writer(const std::string& out_dir, const std::string& run_name);
 
     void write_snapshot(const State& U, const Grid& g, const IdealGas& eos,
+                        Real t, int step);
+
+    // Append per-step spectra to <run_name>_spectra.h5 under /step_<NNNNNN>/.
+    // Each entry holds time, k, E_total, E_sol, E_dil 1D datasets.
+    void append_spectra(const HelmholtzResult& h, const ShellSpectrum& total,
                         Real t, int step);
 
 private:

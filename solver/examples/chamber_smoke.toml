@@ -50,5 +50,5 @@ max_steps      = 5000
 out_dir         = "out_chamber_smoke"
 snapshot_every  = 50
 stats_every     = 5
-write_spectra   = false
+write_spectra   = true
 write_helmholtz = true

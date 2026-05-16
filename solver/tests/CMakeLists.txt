@@ -9,6 +9,8 @@ add_executable(unit_tests
     test_viscous_mms.cpp
     test_spectra.cpp
     test_statistics.cpp
+    test_tgv.cpp
+    test_chamber_smoke.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

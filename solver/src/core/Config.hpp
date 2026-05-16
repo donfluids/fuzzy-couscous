@@ -1,0 +1,85 @@
+#pragma once
+
+#include "core/Grid.hpp"
+#include "core/Types.hpp"
+
+#include <string>
+
+namespace blast {
+
+enum class BCType { Periodic, SlipWall, Outflow };
+
+enum class ICType {
+    SodX, ShuOsherX, Sedov, TaylorGreen, CBC,
+    TopHatSphere, SmoothSphere, CJDetonation
+};
+
+struct PhysicsConfig {
+    GammaLaw eos;
+    Real     mu = 1.8e-5;
+    Real     prandtl = 0.71;
+    Real     bulk_visc = 0.0;
+};
+
+struct AFPConfig {
+    bool enabled  = true;
+    int  r_order  = 4;
+    Real C_mu     = 0.002;
+    Real C_beta   = 1.0;
+    Real C_kappa  = 0.01;
+};
+
+struct TimeConfig {
+    Real cfl_hyperbolic = 0.5;
+    Real cfl_viscous    = 0.25;
+    Real t_end          = 0.0;
+    Real dt_max         = 1e30;
+    int  max_steps      = 1'000'000;
+};
+
+struct BCSet {
+    BCType xlo = BCType::Periodic, xhi = BCType::Periodic;
+    BCType ylo = BCType::Periodic, yhi = BCType::Periodic;
+    BCType zlo = BCType::Periodic, zhi = BCType::Periodic;
+};
+
+struct ICParams {
+    ICType type = ICType::SodX;
+    // Sphere blast (top-hat / smoothed / Y4,2-perturbed).
+    Real r0       = 0.0;
+    Real rho_B    = 1.0;
+    Real T_B      = 1.0;
+    Real rho_0    = 1.0;
+    Real T_0      = 1.0;
+    Real Y42_amp  = 0.0;
+    Real tanh_thickness = 0.0;
+    // CJ detonation extras.
+    Real cj_velocity = 0.0;
+    // CBC / Rogallo random.
+    Real cbc_urms    = 1.0;
+    Real cbc_k_peak  = 4.0;
+    int  cbc_seed    = 12345;
+};
+
+struct OutputConfig {
+    std::string out_dir         = "out";
+    int         snapshot_every  = 100;
+    int         stats_every     = 10;
+    bool        write_spectra   = true;
+    bool        write_helmholtz = true;
+};
+
+struct Config {
+    Grid           grid;
+    BCSet          bc;
+    ICParams       ic;
+    PhysicsConfig  physics;
+    AFPConfig      afp;
+    TimeConfig     time;
+    OutputConfig   output;
+    std::string    run_name = "run";
+};
+
+Config load_config(const std::string& path);
+
+}  // namespace blast

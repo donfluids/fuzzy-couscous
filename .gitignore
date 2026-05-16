@@ -1,0 +1,11 @@
+build/
+out/
+out_*/
+*.h5
+*.xdmf
+*.png
+*.pdf
+*.swp
+.DS_Store
+__pycache__/
+*.pyc

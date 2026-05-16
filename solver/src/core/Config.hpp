@@ -19,6 +19,9 @@ struct PhysicsConfig {
     Real     mu = 1.8e-5;
     Real     prandtl = 0.71;
     Real     bulk_visc = 0.0;
+    // Hyperdissipation coefficient nu_h for the -(nabla^2)^2 U sink.
+    // <=0 disables. See ViscousParams::hyper_coeff for the rationale.
+    Real     hyper_coeff = 0.0;
 };
 
 struct AFPConfig {

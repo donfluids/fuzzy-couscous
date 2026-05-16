@@ -89,6 +89,7 @@ Config load_config(const std::string& path) {
     c.physics.mu         = pick<double>(ph["mu"],     c.physics.mu);
     c.physics.prandtl    = pick<double>(ph["prandtl"], c.physics.prandtl);
     c.physics.bulk_visc  = pick<double>(ph["bulk_visc"], c.physics.bulk_visc);
+    c.physics.hyper_coeff = pick<double>(ph["hyper_coeff"], c.physics.hyper_coeff);
 
     auto a = tbl["afp"];
     c.afp.enabled = pick<bool>(a["enabled"], c.afp.enabled);

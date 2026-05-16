@@ -69,6 +69,7 @@ ViscousParams to_viscous(const PhysicsConfig& p) {
     vp.mu = p.mu;
     vp.prandtl = p.prandtl;
     vp.bulk_visc = p.bulk_visc;
+    vp.hyper_coeff = p.hyper_coeff;
     return vp;
 }
 

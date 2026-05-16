@@ -18,6 +18,21 @@ inline Real ddx_6(const Real* __restrict__ f, Index stride, Real inv_dx) {
           + a3 * (f[3*stride] - f[-3*stride])) * inv_dx;
 }
 
+// 6th-order central second derivative. Coefficients on f[-3..+3]:
+//   (2, -27, 270, -490, 270, -27, 2) / (180 dx^2)
+// Used by hyperdissipation (composed twice to give nabla^4).
+inline Real d2dx2_6(const Real* __restrict__ f, Index stride, Real inv_dx2) {
+    constexpr Real a3 = 2.0   / 180.0;
+    constexpr Real a2 = -27.0 / 180.0;
+    constexpr Real a1 = 270.0 / 180.0;
+    constexpr Real a0 = -490.0 / 180.0;
+    return inv_dx2 * (
+        a3 * (f[ 3 * stride] + f[-3 * stride])
+      + a2 * (f[ 2 * stride] + f[-2 * stride])
+      + a1 * (f[ 1 * stride] + f[-1 * stride])
+      + a0 *  f[0]);
+}
+
 // 6th-order explicit Lele low-pass filter (a0=11/16, a1=15/32, a2=-3/16,
 // a3=1/32; coefficients sum to 1). Fits within RADIUS ghost cells.
 inline Real filter_6(const Real* __restrict__ f, Index stride) {

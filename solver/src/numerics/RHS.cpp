@@ -383,27 +383,82 @@ void add_viscous_flux_divergence(const State& Flux, int d, Real inv_dh,
 
 }  // namespace
 
+// Composed (nabla^2)^2 applied per conserved variable as -nu_h * Lap(Lap(U)).
+// Pass 1 evaluates the Laplacian into a scratch field on interior + 3 ghost
+// rings; pass 2 takes the Laplacian of that and ADDS the contribution.
+// Requires NGHOST >= 6 (we have it).
+static void add_rhs_hyperdissipation(const State& U, const Grid& g,
+                                     Real nu_h, State& Rhs) {
+    if (nu_h <= 0.0) return;
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+    const Real inv_dx2 = 1.0 / (g.dx() * g.dx());
+    const Real inv_dy2 = (ny > 1) ? 1.0 / (g.dy() * g.dy()) : 0.0;
+    const Real inv_dz2 = (nz > 1) ? 1.0 / (g.dz() * g.dz()) : 0.0;
+    const Index sx = 1;
+
+    Field3D lap(nx, ny, nz, ng);
+    const int lo = -ng + stencil::RADIUS;
+    const int hi_x = nx + ng - stencil::RADIUS;
+    const int hi_y = ny + ng - stencil::RADIUS;
+    const int hi_z = nz + ng - stencil::RADIUS;
+
+    for (int v = 0; v < NCONS; ++v) {
+        const Field3D& Uv = U[v];
+        const Index sy = Uv.ldx();
+        const Index sz = Uv.ldxy();
+
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = lo; k < hi_z; ++k)
+            for (int j = lo; j < hi_y; ++j) {
+#pragma omp simd
+                for (int i = lo; i < hi_x; ++i) {
+                    const Real* p = &Uv(i, j, k);
+                    Real L = stencil::d2dx2_6(p, sx, inv_dx2);
+                    if (ny > 1) L += stencil::d2dx2_6(p, sy, inv_dy2);
+                    if (nz > 1) L += stencil::d2dx2_6(p, sz, inv_dz2);
+                    lap(i, j, k) = L;
+                }
+            }
+
+        Field3D& Rv = Rhs[v];
+        const Index lsx = 1, lsy = lap.ldx(), lsz = lap.ldxy();
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j) {
+#pragma omp simd
+                for (int i = 0; i < nx; ++i) {
+                    const Real* q = &lap(i, j, k);
+                    Real L2 = stencil::d2dx2_6(q, lsx, inv_dx2);
+                    if (ny > 1) L2 += stencil::d2dx2_6(q, lsy, inv_dy2);
+                    if (nz > 1) L2 += stencil::d2dx2_6(q, lsz, inv_dz2);
+                    Rv(i, j, k) -= nu_h * L2;
+                }
+            }
+    }
+}
+
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
                      const ViscousParams& vp, State& Rhs) {
-    if (vp.mu <= 0.0) return;
+    if (vp.mu > 0.0) {
+        CellGradients G;
+        G.allocate(U.nx(), U.ny(), U.nz(), U.ng());
+        compute_cell_gradients(U, g, eos, G);
 
-    CellGradients G;
-    G.allocate(U.nx(), U.ny(), U.nz(), U.ng());
-    compute_cell_gradients(U, g, eos, G);
+        State Flux(U.nx(), U.ny(), U.nz(), U.ng());
 
-    State Flux(U.nx(), U.ny(), U.nz(), U.ng());
+        fill_viscous_flux_dir(U, G, vp, eos, 0, Flux);
+        add_viscous_flux_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
 
-    fill_viscous_flux_dir(U, G, vp, eos, 0, Flux);
-    add_viscous_flux_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
-
-    if (U.ny() > 1) {
-        fill_viscous_flux_dir(U, G, vp, eos, 1, Flux);
-        add_viscous_flux_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
+        if (U.ny() > 1) {
+            fill_viscous_flux_dir(U, G, vp, eos, 1, Flux);
+            add_viscous_flux_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
+        }
+        if (U.nz() > 1) {
+            fill_viscous_flux_dir(U, G, vp, eos, 2, Flux);
+            add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
+        }
     }
-    if (U.nz() > 1) {
-        fill_viscous_flux_dir(U, G, vp, eos, 2, Flux);
-        add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
-    }
+    add_rhs_hyperdissipation(U, g, vp.hyper_coeff, Rhs);
 }
 
 }  // namespace blast

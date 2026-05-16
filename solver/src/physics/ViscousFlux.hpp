@@ -9,6 +9,15 @@ struct ViscousParams {
     Real mu = 1.8e-5;       // dynamic viscosity (constant for now)
     Real prandtl = 0.71;
     Real bulk_visc = 0.0;   // optional second viscosity coefficient
+    // Hyperdissipation coefficient nu_h for the operator
+    //   d U / d t  +=  -nu_h * (nabla^2)^2 U
+    // applied uniformly to every conserved variable. <=0 disables.
+    // Acts like a Smagorinsky-style high-k sink without the Smagorinsky
+    // model's near-wall pathology: linear in U so it's cheap, and only
+    // attenuates modes near the Nyquist (Fourier weight nu_h k^4 grows
+    // fast). Standard LES stability device when central / WENO schemes
+    // alone produce zero numerical dissipation in smooth turbulence.
+    Real hyper_coeff = 0.0;
 };
 
 // Local 3x3 velocity gradient at a cell, dudx[v][d] = d u_v / d x_d,

@@ -19,7 +19,7 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                const ViscousParams& vp, Real dt) {
     auto eval_rhs = [&](const State& Uin) {
         compute_rhs_inviscid(Uin, g, eos, k_);
-        if (vp.mu > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
     };
 
     apply_bcs(U, bc);
@@ -40,7 +40,7 @@ void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,
                            Real dt, Real t_current, const SourceCallback& src) {
     auto eval_rhs = [&](const State& Uin, Real t_stage) {
         compute_rhs_inviscid(Uin, g, eos, k_);
-        if (vp.mu > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
         if (src) src(k_, g, t_stage);
     };
 

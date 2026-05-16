@@ -46,8 +46,15 @@ void apply_ic(State& U, const Grid& g, const IdealGas& eos, const Config& c) {
                                c.ic.Y42_amp);
             break;
         case ICType::CJDetonation:
+            ic_cj_detonation_3d(U, g, eos, c.ic.rho_0, c.ic.T_0,
+                                /*q*/ c.ic.cj_velocity,
+                                c.ic.r0,
+                                (c.ic.tanh_thickness > 0 ? c.ic.tanh_thickness
+                                                          : 1.5 * g.dx()),
+                                c.ic.Y42_amp);
+            break;
         case ICType::CBC:
-            BLAST_ERROR("IC not yet implemented in main driver");
+            BLAST_ERROR("CBC IC not yet implemented in main driver");
             std::exit(1);
     }
 }

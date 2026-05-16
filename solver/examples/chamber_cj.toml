@@ -1,0 +1,51 @@
+# Small CJ-detonation smoke run to exercise the M9 reviewer-revision IC.
+# Heat release q is in units of velocity^2 (here R = 1, T_0 = 1, c_0^2 = 1.4,
+# so q = 50 puts us deep in the strong-detonation regime).
+run_name = "chamber_cj"
+
+[grid]
+nx = 32
+ny = 32
+nz = 32
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "cj_detonation"
+r0             = 0.1
+rho_0          = 1.0
+T_0            = 1.0
+cj_velocity    = 50.0          # heat release q (re-using slot in ICParams)
+Y42_amp        = 0.0
+tanh_thickness = 0.0469        # ~ 1.5 dx
+
+[physics]
+gamma = 1.4
+R     = 1.0
+mu    = 0.0
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.1
+dt_max         = 1e30
+max_steps      = 5000
+
+[output]
+out_dir         = "out_chamber_cj"
+snapshot_every  = 50
+stats_every     = 5
+write_spectra   = true
+write_helmholtz = true

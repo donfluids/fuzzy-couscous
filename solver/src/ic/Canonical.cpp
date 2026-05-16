@@ -131,6 +131,60 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
             }
 }
 
+void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
+                         Real rho_0, Real T_0, Real q_specific,
+                         Real r_cj, Real tanh_thickness, Real Y42_amp) {
+    const Real gamma = eos.eos.gamma;
+    const Real R     = eos.eos.R;
+    const Real p_0   = rho_0 * R * T_0;
+    const Real c_0   = std::sqrt(gamma * R * T_0);
+
+    // Exact ideal-gas CJ detonation Mach number (Williams, Combustion Theory
+    // 1985, eq. 6.28). Define alpha = (gamma + 1) q / c_0^2; then
+    //   M_D^2 = 1 + alpha + sqrt(alpha^2 + 2 alpha)
+    // recovers both M_D -> 1 as q -> 0 and M_D^2 -> 2 (gamma+1) q / c_0^2
+    // for q >> c_0^2 (strong detonation).
+    const Real q = q_specific;                                 // J/kg
+    const Real alpha = (gamma + 1.0) * q / (c_0 * c_0);
+    const Real M_D2  = 1.0 + alpha + std::sqrt(alpha * alpha + 2.0 * alpha);
+    const Real D     = c_0 * std::sqrt(M_D2);
+
+    // Post-CJ-shock state in the lab frame.
+    const Real p_cj   = p_0   * (1.0 + gamma * M_D2) / (gamma + 1.0);
+    const Real rho_cj = rho_0 * (gamma + 1.0) * M_D2 / (gamma * M_D2 + 1.0);
+    const Real u_cj   = D * (1.0 - rho_0 / rho_cj);            // radial outward
+
+    const Real xc = g.x0 + 0.5 * g.lx;
+    const Real yc = g.y0 + 0.5 * g.ly;
+    const Real zc = g.z0 + 0.5 * g.lz;
+    const Real safe_thickness = std::max(tanh_thickness, 1e-12);
+
+    for (int k = 0; k < g.nz; ++k)
+        for (int j = 0; j < g.ny; ++j)
+            for (int i = 0; i < g.nx; ++i) {
+                const Real x = g.xc(i) - xc;
+                const Real y = g.yc(j) - yc;
+                const Real z = g.zc(k) - zc;
+                const Real r = std::sqrt(x*x + y*y + z*z);
+                Real r_eff = r_cj * (1.0 + Y42_amp * y42_unit(x, y, z));
+                Real w;
+                if (tanh_thickness > 0.0) {
+                    w = 0.5 * (1.0 - std::tanh((r - r_eff) / safe_thickness));
+                } else {
+                    w = (r < r_eff) ? 1.0 : 0.0;
+                }
+                const Real rho = rho_0 + w * (rho_cj - rho_0);
+                const Real p   = p_0   + w * (p_cj   - p_0);
+                Real ur = 0.0;
+                if (w > 0.0 && r > 1e-12) ur = w * u_cj;
+                const Real inv_r = (r > 1e-12) ? 1.0 / r : 0.0;
+                const Real u = ur * x * inv_r;
+                const Real v = ur * y * inv_r;
+                const Real wz = ur * z * inv_r;
+                set_from_primitive(U, i, j, k, eos, rho, u, v, wz, p);
+            }
+}
+
 void ic_density_wave_x(State& U, const Grid& g, const IdealGas& eos,
                        Real amplitude, Real kwave, Real u0) {
     const Real k_phys = 2.0 * M_PI * kwave / g.lx;

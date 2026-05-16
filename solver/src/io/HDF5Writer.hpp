@@ -31,6 +31,7 @@ private:
     std::string out_dir_;
     std::string run_name_;
     std::vector<std::pair<int, Real>> entries_;   // step, time
+    Grid grid_for_xdmf_{};                        // captured on first snapshot
 
     void update_xdmf_index_();
     std::string snapshot_path_(int step) const;

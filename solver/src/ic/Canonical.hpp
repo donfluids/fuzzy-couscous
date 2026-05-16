@@ -37,6 +37,21 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real rho_ambient, Real T_ambient,
                         Real r_blast, Real tanh_thickness, Real Y42_amp);
 
+// Chapman-Jouguet detonation initial condition (addresses reviewer M9).
+// At t=0 a spherical region of radius `r_cj` contains gas in the CJ state
+// behind a strong detonation wave traveling outward with detonation velocity
+// D_cj. Outside is ambient (rho_0, T_0). CJ relations for an ideal gas with
+// heat release q per unit ambient mass:
+//   D_cj = sqrt(2 (gamma^2 - 1) q + c_0^2)        // strong detonation limit q >> c_0^2
+//   p_cj / p_0  =  (1 + gamma D_cj^2/(R T_0)) / (gamma + 1)
+//   rho_cj / rho_0 = (gamma + 1) * gamma * D_cj^2 / (gamma D_cj^2 + c_0^2)
+//   u_cj (radial outward) = D_cj * (rho_cj - rho_0) / rho_cj
+// Radial velocity behind the shock makes this much closer to a real HE
+// release than the top-hat / smoothed pressure sphere.
+void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
+                         Real rho_0, Real T_0, Real q_specific,
+                         Real r_cj, Real tanh_thickness, Real Y42_amp);
+
 // Smooth density wave for spatial-order verification:
 //   rho = 1 + A sin(2 pi k x), u = u0, p = 1.
 void ic_density_wave_x(State& U, const Grid& g, const IdealGas& eos,

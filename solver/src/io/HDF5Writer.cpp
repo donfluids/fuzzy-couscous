@@ -108,6 +108,7 @@ void HDF5Writer::write_snapshot(const State& U, const Grid& g,
     H5Fclose(file);
 
     entries_.emplace_back(step, t);
+    grid_for_xdmf_ = g;
     update_xdmf_index_();
 }
 
@@ -141,9 +142,29 @@ void HDF5Writer::append_spectra(const HelmholtzResult& h,
 }
 
 void HDF5Writer::update_xdmf_index_() {
-    // Minimal XDMF time-series index for ParaView / VisIt.
+    // ParaView/VisIt-compatible XDMF temporal collection over a uniform
+    // rectilinear cell-centered grid. HDF5 datasets are stored with shape
+    // (nz, ny, nx); for cell-centered fields the topology dimensions are
+    // (nz+1, ny+1, nx+1).
     const std::string path = out_dir_ + "/" + run_name_ + ".xdmf";
     std::ofstream f(path);
+    if (!f) {
+        BLAST_ERROR("HDF5: failed to open XDMF index {}", path);
+        return;
+    }
+    const Grid& g = grid_for_xdmf_;
+    const int nx = g.nx, ny = g.ny, nz = g.nz;
+
+    auto write_attribute = [&](const char* name, const std::string& snap) {
+        f << "        <Attribute Name=\"" << name
+          << "\" AttributeType=\"Scalar\" Center=\"Cell\">\n";
+        f << "          <DataItem Dimensions=\"" << nz << " " << ny << " " << nx
+          << "\" Format=\"HDF\" NumberType=\"Float\" Precision=\"8\">\n";
+        f << "            " << snap << ":/" << name << "\n";
+        f << "          </DataItem>\n";
+        f << "        </Attribute>\n";
+    };
+
     f << "<?xml version=\"1.0\" ?>\n";
     f << "<!DOCTYPE Xdmf SYSTEM \"Xdmf.dtd\" []>\n";
     f << "<Xdmf Version=\"2.2\">\n";
@@ -153,11 +174,20 @@ void HDF5Writer::update_xdmf_index_() {
     for (auto [step, t] : entries_) {
         char snap[64];
         std::snprintf(snap, sizeof(snap), "%s_%06d.h5", run_name_.c_str(), step);
-        f << "      <Grid Name=\"step_" << step
-          << "\" GridType=\"Uniform\">\n";
+        f << "      <Grid Name=\"step_" << step << "\" GridType=\"Uniform\">\n";
         f << "        <Time Value=\"" << t << "\"/>\n";
-        f << "        <!-- placeholder: full ParaView XDMF requires Topology/Geometry; "
-             "snapshot HDF5 contains all fields under the named datasets -->\n";
+        f << "        <Topology TopologyType=\"3DCoRectMesh\" Dimensions=\""
+          << (nz + 1) << " " << (ny + 1) << " " << (nx + 1) << "\"/>\n";
+        f << "        <Geometry GeometryType=\"ORIGIN_DXDYDZ\">\n";
+        f << "          <DataItem Dimensions=\"3\" Format=\"XML\">"
+          << g.z0 << " " << g.y0 << " " << g.x0 << "</DataItem>\n";
+        f << "          <DataItem Dimensions=\"3\" Format=\"XML\">"
+          << g.dz() << " " << g.dy() << " " << g.dx() << "</DataItem>\n";
+        f << "        </Geometry>\n";
+        for (const char* name : {"density", "velocity_x", "velocity_y",
+                                  "velocity_z", "pressure", "temperature"}) {
+            write_attribute(name, snap);
+        }
         f << "      </Grid>\n";
     }
     f << "    </Grid>\n";

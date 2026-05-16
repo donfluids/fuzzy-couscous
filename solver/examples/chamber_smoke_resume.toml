@@ -1,0 +1,42 @@
+# Resumes from the last checkpoint of chamber_smoke (run that first).
+run_name = "chamber_smoke_resumed"
+
+[grid]
+nx = 32
+ny = 32
+nz = 32
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type = "tophat_sphere"   # ignored when restart_path is set
+
+[physics]
+gamma = 1.4
+R     = 1.0
+
+[time]
+cfl_hyperbolic = 0.3
+t_end          = 0.4   # 0.1 past the original t_end
+max_steps      = 5000
+
+[output]
+out_dir          = "out_chamber_smoke_resumed"
+snapshot_every   = 50
+stats_every      = 5
+checkpoint_every = 0
+restart_path     = "out_chamber_smoke/chamber_smoke.ckpt.h5"
+write_spectra    = true
+write_helmholtz  = true

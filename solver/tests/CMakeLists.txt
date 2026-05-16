@@ -12,6 +12,7 @@ add_executable(unit_tests
     test_tgv.cpp
     test_chamber_smoke.cpp
     test_cj_detonation.cpp
+    test_restart.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

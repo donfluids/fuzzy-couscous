@@ -65,8 +65,10 @@ struct OutputConfig {
     std::string out_dir         = "out";
     int         snapshot_every  = 100;
     int         stats_every     = 10;
+    int         checkpoint_every = 0;   // 0 disables
     bool        write_spectra   = true;
     bool        write_helmholtz = true;
+    std::string restart_path    = "";   // empty -> cold start
 };
 
 struct Config {

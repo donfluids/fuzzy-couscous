@@ -51,6 +51,7 @@ add_library(blast_core STATIC
     src/diagnostics/Spectra.cpp
     src/diagnostics/Statistics.cpp
     src/io/HDF5Writer.cpp
+    src/io/Restart.cpp
 )
 target_include_directories(blast_core PUBLIC
     src

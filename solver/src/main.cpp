@@ -8,6 +8,7 @@
 #include "ic/Canonical.hpp"
 #include "io/HDF5Writer.hpp"
 #include "io/Log.hpp"
+#include "io/Restart.hpp"
 #include "numerics/RHS.hpp"
 #include "numerics/RK3.hpp"
 #include "physics/EOS.hpp"
@@ -110,7 +111,22 @@ int main(int argc, char** argv) {
     ViscousParams vp = to_viscous(c.physics);
 
     State U(c.grid.nx, c.grid.ny, c.grid.nz);
-    apply_ic(U, c.grid, eos, c);
+    Real start_time = 0.0;
+    int  start_step = 0;
+    if (!c.output.restart_path.empty()) {
+        try {
+            auto h = read_checkpoint(c.output.restart_path, U, c.grid);
+            start_time = h.time;
+            start_step = h.step;
+            BLAST_INFO("restart: loaded {} at step={} t={}",
+                       c.output.restart_path, start_step, start_time);
+        } catch (const std::exception& e) {
+            BLAST_ERROR("restart failed: {}", e.what());
+            return 1;
+        }
+    } else {
+        apply_ic(U, c.grid, eos, c);
+    }
 
     BCSet bc = c.bc;
     apply_bcs(U, bc);
@@ -144,10 +160,13 @@ int main(int argc, char** argv) {
                    (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0));
     };
 
-    Real t = 0.0;
-    int step = 0;
-    write_diagnostics(0, 0.0, 0.0);
+    Real t = start_time;
+    int step = start_step;
+    write_diagnostics(step, t, 0.0);
     writer.write_snapshot(U, c.grid, eos, t, step);
+
+    const std::string ckpt_path =
+        c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
         Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic);
@@ -169,6 +188,9 @@ int main(int argc, char** argv) {
             write_diagnostics(step, t, dt);
         if (step % c.output.snapshot_every == 0)
             writer.write_snapshot(U, c.grid, eos, t, step);
+        if (c.output.checkpoint_every > 0
+            && step % c.output.checkpoint_every == 0)
+            write_checkpoint(ckpt_path, U, c.grid, t, step);
     }
 
     BLAST_INFO("finished: step={} t={}", step, t);

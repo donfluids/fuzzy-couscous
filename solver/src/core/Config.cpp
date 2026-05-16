@@ -103,11 +103,13 @@ Config load_config(const std::string& path) {
     c.time.max_steps      = pick<int64_t>(t["max_steps"], c.time.max_steps);
 
     auto o = tbl["output"];
-    c.output.out_dir         = pick<std::string>(o["out_dir"], c.output.out_dir);
-    c.output.snapshot_every  = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);
-    c.output.stats_every     = pick<int64_t>(o["stats_every"],    c.output.stats_every);
-    c.output.write_spectra   = pick<bool>(o["write_spectra"],   c.output.write_spectra);
-    c.output.write_helmholtz = pick<bool>(o["write_helmholtz"], c.output.write_helmholtz);
+    c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
+    c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);
+    c.output.stats_every      = pick<int64_t>(o["stats_every"],    c.output.stats_every);
+    c.output.checkpoint_every = pick<int64_t>(o["checkpoint_every"], c.output.checkpoint_every);
+    c.output.write_spectra    = pick<bool>(o["write_spectra"],   c.output.write_spectra);
+    c.output.write_helmholtz  = pick<bool>(o["write_helmholtz"], c.output.write_helmholtz);
+    c.output.restart_path     = pick<std::string>(o["restart_path"], c.output.restart_path);
 
     return c;
 }

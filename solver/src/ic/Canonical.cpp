@@ -235,6 +235,47 @@ void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
             }
 }
 
+void ic_entropy_wave_3d(State& U, const Grid& g, const IdealGas& eos,
+                        Real amplitude, Real u0, Real v0, Real w0,
+                        Real rho_0, Real p_0) {
+    const Real kx = 2.0 * M_PI / g.lx;
+    const Real ky = 2.0 * M_PI / g.ly;
+    const Real kz = 2.0 * M_PI / g.lz;
+    for (int k = -U.ng(); k < g.nz + U.ng(); ++k)
+        for (int j = -U.ng(); j < g.ny + U.ng(); ++j)
+            for (int i = -U.ng(); i < g.nx + U.ng(); ++i) {
+                const Real x = g.xc(i), y = g.yc(j), z = g.zc(k);
+                const Real rho = rho_0 * (1.0
+                    + amplitude * std::sin(kx * x) * std::sin(ky * y) * std::sin(kz * z));
+                set_from_primitive(U, i, j, k, eos, rho, u0, v0, w0, p_0);
+            }
+}
+
+void ic_isentropic_vortex(State& U, const Grid& g, const IdealGas& eos,
+                          Real eps, Real u_inf, Real v_inf,
+                          Real x_c, Real y_c) {
+    const Real gamma = eos.eos.gamma;
+    const Real gm1   = gamma - 1.0;
+    const Real coeff = gm1 * eps * eps / (8.0 * gamma * M_PI * M_PI);
+    const Real two_pi_inv = 1.0 / (2.0 * M_PI);
+
+    for (int k = -U.ng(); k < g.nz + U.ng(); ++k)
+        for (int j = -U.ng(); j < g.ny + U.ng(); ++j)
+            for (int i = -U.ng(); i < g.nx + U.ng(); ++i) {
+                const Real x = g.xc(i), y = g.yc(j);
+                const Real xd = x - x_c;
+                const Real yd = y - y_c;
+                const Real r2 = xd * xd + yd * yd;
+                const Real e_factor = std::exp((1.0 - r2) * 0.5);
+                const Real u =  u_inf - eps * yd * two_pi_inv * e_factor;
+                const Real v =  v_inf + eps * xd * two_pi_inv * e_factor;
+                const Real T = 1.0 - coeff * std::exp(1.0 - r2);
+                const Real rho = std::pow(T, 1.0 / gm1);
+                const Real p   = std::pow(T, gamma / gm1);
+                set_from_primitive(U, i, j, k, eos, rho, u, v, 0.0, p);
+            }
+}
+
 void ic_density_wave_x(State& U, const Grid& g, const IdealGas& eos,
                        Real amplitude, Real kwave, Real u0) {
     const Real k_phys = 2.0 * M_PI * kwave / g.lx;

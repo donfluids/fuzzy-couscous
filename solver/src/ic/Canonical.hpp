@@ -58,4 +58,24 @@ void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
 void ic_density_wave_x(State& U, const Grid& g, const IdealGas& eos,
                        Real amplitude, Real kwave, Real u0);
 
+// 3D convecting entropy wave (MMS-A): exact solution of compressible
+// inviscid Euler. ρ varies as a triple-sine product; (u, v, w) and p are
+// uniform. The wave translates rigidly at (u0, v0, w0); at t = L / u_i the
+// solution returns to its initial state. Fills interior + ghost cells.
+void ic_entropy_wave_3d(State& U, const Grid& g, const IdealGas& eos,
+                        Real amplitude, Real u0, Real v0, Real w0,
+                        Real rho_0, Real p_0);
+
+// Isentropic Euler vortex (Yee-Sandham-Djomehri 1999): smooth coherent 2D
+// vortex of unit characteristic scale superposed on a uniform flow, embedded
+// z-invariant in the 3D domain. Exact solution of compressible inviscid
+// Euler; the vortex translates at (u_inf, v_inf) without distortion.
+//   T  = T_inf - (gamma-1) eps^2 / (8 gamma pi^2) exp(1 - r^2)
+//   rho = (T/T_inf)^(1/(gamma-1))   p = (T/T_inf)^(gamma/(gamma-1))
+// with r^2 = (x - x_c)^2 + (y - y_c)^2. T_inf = rho_inf = p_inf = 1.
+// Fills interior + ghost cells.
+void ic_isentropic_vortex(State& U, const Grid& g, const IdealGas& eos,
+                          Real eps, Real u_inf, Real v_inf,
+                          Real x_c, Real y_c);
+
 }  // namespace blast

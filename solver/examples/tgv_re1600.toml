@@ -1,0 +1,54 @@
+# Taylor-Green vortex at Re = 1600 on a 64^3 periodic cube. The classical
+# benchmark for transition to fully developed isotropic turbulence: the
+# single-mode IC stretches into a broadband cascade peaking around t ~ 9.
+# We're looking for the k^{-5/3} inertial-range slope to emerge at late time.
+#
+# Standard Re=1600 parameters (rho_0 = V0 = L_box/(2 pi) = 1, M_0 = 0.1):
+#   mu = 1 / 1600 = 6.25e-4
+#   p_ref = rho_0 V0^2 / (gamma M_0^2) = 1 / (1.4 * 0.01) = 71.43
+#   c_0 ~ 10, t_advective ~ L/V0 = 2 pi.
+run_name = "tgv_re1600"
+
+[grid]
+nx = 64
+ny = 64
+nz = 64
+lx = 6.283185307179586          # 2 pi
+ly = 6.283185307179586
+lz = 6.283185307179586
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+type = "taylor_green"
+
+[physics]
+gamma     = 1.4
+R         = 1.0
+mu        = 6.25e-4              # Re = 1/mu = 1600
+prandtl   = 0.71
+bulk_visc = 0.0
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 12.0            # well past peak dissipation at t ~ 9
+dt_max         = 1.0
+max_steps      = 200000
+
+[output]
+out_dir          = "out_tgv_re1600"
+snapshot_every   = 600           # ~5 snapshots
+stats_every      = 10
+checkpoint_every = 0
+write_spectra    = true
+write_helmholtz  = true

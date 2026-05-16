@@ -2,9 +2,12 @@
 
 #include "core/Field3D.hpp"
 #include "numerics/Ducros.hpp"
+#include "numerics/Gradients.hpp"
+#include "numerics/Stencils.hpp"
 #include "numerics/WENO5.hpp"
 #include "physics/EOS.hpp"
 #include "physics/EulerFlux.hpp"
+#include "physics/ViscousFlux.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -279,6 +282,128 @@ Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                 if (loc > max_inv_dt) max_inv_dt = loc;
             }
     return (max_inv_dt > 0.0) ? cfl / max_inv_dt : 1e30;
+}
+
+Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
+                    Real cfl) {
+    if (vp.mu <= 0.0) return 1e30;
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    const auto& rho = U[RHO];
+    const Real dx2 = g.dx() * g.dx();
+    const Real dy2 = (ny > 1) ? g.dy() * g.dy() : 1e30;
+    const Real dz2 = (nz > 1) ? g.dz() * g.dz() : 1e30;
+    const Real h2_min = std::min({dx2, dy2, dz2});
+
+    Real rho_min = 1e30;
+#pragma omp parallel for collapse(2) schedule(static) reduction(min:rho_min)
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i)
+                if (rho(i, j, k) < rho_min) rho_min = rho(i, j, k);
+
+    const Real nu_max = vp.mu / std::max(rho_min, 1e-30);
+    return cfl * h2_min / nu_max;
+}
+
+namespace {
+
+// Cell-centered Stokes-form viscous flux for direction d, computed from
+// pre-evaluated velocity / temperature gradients.
+void fill_viscous_flux_dir(const State& U, const CellGradients& G,
+                           const ViscousParams& vp, const IdealGas& eos,
+                           int d, State& Flux) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+    // Gradients are valid on [-ng+3, n+ng-3]. We need viscous flux on the
+    // same region so the next 6th-order outer derivative is well-defined
+    // for interior cells.
+    const int lo = -ng + stencil::RADIUS;
+    const int hi_x = nx + ng - stencil::RADIUS;
+    const int hi_y = ny + ng - stencil::RADIUS;
+    const int hi_z = nz + ng - stencil::RADIUS;
+
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+
+    Field3D& Fr = Flux[RHO];
+    Field3D& Fu = Flux[RHOU];
+    Field3D& Fv = Flux[RHOV];
+    Field3D& Fw = Flux[RHOW];
+    Field3D& FE = Flux[RHOE];
+
+    // Zero the full padded region first; outer derivative will only read
+    // interior+radius cells, but cleaner to start with zeroed scratch.
+    Fr.fill(0.0); Fu.fill(0.0); Fv.fill(0.0); Fw.fill(0.0); FE.fill(0.0);
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = lo; k < hi_z; ++k)
+        for (int j = lo; j < hi_y; ++j)
+            for (int i = lo; i < hi_x; ++i) {
+                const Real r  = rho(i, j, k);
+                CellState C{};
+                C.u = mx(i, j, k) / r;
+                C.v = my(i, j, k) / r;
+                C.w = mz(i, j, k) / r;
+                // T not used directly in flux assembly but kept for completeness.
+                for (int a = 0; a < 3; ++a) {
+                    for (int b = 0; b < 3; ++b) C.dudx[a][b] = G.du[a][b](i, j, k);
+                    C.dTdx[a] = G.dT[a](i, j, k);
+                }
+                ViscousFluxVec Gv = viscous_flux(C, vp, eos, d);
+                Fr(i, j, k) = Gv.f[RHO ];
+                Fu(i, j, k) = Gv.f[RHOU];
+                Fv(i, j, k) = Gv.f[RHOV];
+                Fw(i, j, k) = Gv.f[RHOW];
+                FE(i, j, k) = Gv.f[RHOE];
+            }
+}
+
+void add_viscous_flux_divergence(const State& Flux, int d, Real inv_dh,
+                                 State& Rhs) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const Index s = (d == 0 ? 1
+                   : d == 1 ? Flux[RHO].ldx()
+                            : Flux[RHO].ldx() * Flux[RHO].ldxy() / Flux[RHO].ldx());
+    for (int v = 0; v < NCONS; ++v) {
+        if (v == RHO) continue;  // viscous flux is zero for mass eqn
+        const Field3D& F = Flux[v];
+        Field3D&       R = Rhs[v];
+        const Index sd = (d == 0 ? 1 : (d == 1 ? F.ldx() : F.ldxy()));
+        (void)s;
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+#pragma omp simd
+                for (int i = 0; i < nx; ++i) {
+                    R(i, j, k) += stencil::ddx_6(&F(i, j, k), sd, inv_dh);
+                }
+    }
+}
+
+}  // namespace
+
+void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
+                     const ViscousParams& vp, State& Rhs) {
+    if (vp.mu <= 0.0) return;
+
+    CellGradients G;
+    G.allocate(U.nx(), U.ny(), U.nz(), U.ng());
+    compute_cell_gradients(U, g, eos, G);
+
+    State Flux(U.nx(), U.ny(), U.nz(), U.ng());
+
+    fill_viscous_flux_dir(U, G, vp, eos, 0, Flux);
+    add_viscous_flux_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
+
+    if (U.ny() > 1) {
+        fill_viscous_flux_dir(U, G, vp, eos, 1, Flux);
+        add_viscous_flux_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
+    }
+    if (U.nz() > 1) {
+        fill_viscous_flux_dir(U, G, vp, eos, 2, Flux);
+        add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
+    }
 }
 
 }  // namespace blast

@@ -44,6 +44,7 @@ add_library(blast_core STATIC
     src/numerics/RHS.cpp
     src/numerics/RK3.cpp
     src/numerics/Ducros.cpp
+    src/numerics/Gradients.cpp
     src/ic/Canonical.cpp
     src/physics/RiemannExact.cpp
 )

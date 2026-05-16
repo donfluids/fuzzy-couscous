@@ -9,7 +9,10 @@ namespace blast {
 using Real = double;
 using Index = std::int64_t;
 
-inline constexpr int NGHOST = 3;
+// Ghost-layer width. Must be >= max stencil radius used in chained
+// operators. WENO5 needs 3; composed first-derivative viscous fluxes
+// (two 6th-order stencils in sequence) need 6.
+inline constexpr int NGHOST = 6;
 inline constexpr int NCONS = 5;
 
 enum ConsVar : int { RHO = 0, RHOU = 1, RHOV = 2, RHOW = 3, RHOE = 4 };

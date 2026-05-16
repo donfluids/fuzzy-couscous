@@ -4,6 +4,7 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 #include "physics/EOS.hpp"
+#include "physics/ViscousFlux.hpp"
 
 namespace blast {
 
@@ -13,8 +14,18 @@ namespace blast {
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
                           State& Rhs);
 
+// Adds viscous contribution + div(tau u - q) to existing Rhs in-place.
+// Caller has called apply_bcs and (if needed) compute_rhs_inviscid first.
+void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
+                     const ViscousParams& vp, State& Rhs);
+
 // Returns the global maximum stable timestep for the hyperbolic CFL.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                        Real cfl);
+
+// Returns the global maximum stable timestep for the viscous CFL,
+// dt = cfl * dx^2 / nu where nu = mu/rho_min.
+Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
+                    Real cfl);
 
 }  // namespace blast

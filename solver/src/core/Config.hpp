@@ -81,6 +81,18 @@ struct ICParams {
     int  ensemble_seed = 0;
 };
 
+struct ForcingConfig {
+    // Eswaran-Pope stochastic spectral OU forcing for statistically
+    // stationary HIT. Off by default; switch on with `enabled = true`
+    // and set eps_target.
+    bool enabled    = false;
+    int  k_lo       = 1;
+    int  k_hi       = 3;
+    Real eps_target = 0.1;
+    Real T_corr     = 1.0;
+    int  seed       = 12345;
+};
+
 struct OutputConfig {
     std::string out_dir         = "out";
     int         snapshot_every  = 100;
@@ -99,6 +111,7 @@ struct Config {
     AFPConfig      afp;
     TimeConfig     time;
     FilterConfig   filter;
+    ForcingConfig  forcing;
     OutputConfig   output;
     std::string    run_name = "run";
 };

@@ -17,6 +17,8 @@ add_executable(unit_tests
     test_hyperdissipation.cpp
     test_slip_wall.cpp
     test_shu_osher_1d.cpp
+    test_rogallo.cpp
+    test_forcing.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core
@@ -40,3 +42,65 @@ set_tests_properties(unit_tests PROPERTIES
 # Make fixture configs available to tests at the configured location.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/fixtures/example.toml
                ${CMAKE_CURRENT_BINARY_DIR}/fixtures/example.toml COPYONLY)
+
+if(BLAST_MPI)
+    add_executable(test_mpi_halo test_mpi_halo.cpp)
+    target_link_libraries(test_mpi_halo PRIVATE blast_core_mpi)
+
+    add_executable(test_mpi_bitexact test_mpi_bitexact.cpp)
+    target_link_libraries(test_mpi_bitexact PRIVATE blast_core_mpi)
+
+    add_executable(test_mpi_restart test_mpi_restart.cpp)
+    target_link_libraries(test_mpi_restart PRIVATE blast_core_mpi)
+
+    add_executable(test_mpi_spectra_dist test_mpi_spectra_dist.cpp)
+    target_link_libraries(test_mpi_spectra_dist PRIVATE blast_core_mpi)
+
+    add_executable(test_mpi_forcing test_mpi_forcing.cpp)
+    target_link_libraries(test_mpi_forcing PRIVATE blast_core_mpi)
+
+    # Run under mpirun at 1, 2, 4 ranks. OpenMPI in containers (Docker/etc.)
+    # needs --oversubscribe + the root override.
+    set(MPI_ENV "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1")
+    foreach(N 1 2 4)
+        add_test(NAME mpi_halo_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_halo>)
+        set_tests_properties(mpi_halo_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_bitexact_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_bitexact>)
+        set_tests_properties(mpi_bitexact_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_restart_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_restart>)
+        set_tests_properties(mpi_restart_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_spectra_dist_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_spectra_dist>)
+        set_tests_properties(mpi_spectra_dist_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_forcing_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_forcing>)
+        set_tests_properties(mpi_forcing_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+    endforeach()
+endif()

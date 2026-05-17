@@ -107,4 +107,15 @@ void apply_bcs(State& U, const BCSet& bc) {
     apply_face_all_vars(U, 2, +1, bc.zhi);
 }
 
+#ifdef BLAST_MPI
+void apply_bcs(State& U, const BCSet& bc, const Domain& d) {
+    if (d.is_physical_face(0, -1)) apply_face_all_vars(U, 0, -1, bc.xlo);
+    if (d.is_physical_face(0, +1)) apply_face_all_vars(U, 0, +1, bc.xhi);
+    if (d.is_physical_face(1, -1)) apply_face_all_vars(U, 1, -1, bc.ylo);
+    if (d.is_physical_face(1, +1)) apply_face_all_vars(U, 1, +1, bc.yhi);
+    if (d.is_physical_face(2, -1)) apply_face_all_vars(U, 2, -1, bc.zlo);
+    if (d.is_physical_face(2, +1)) apply_face_all_vars(U, 2, +1, bc.zhi);
+}
+#endif
+
 }  // namespace blast

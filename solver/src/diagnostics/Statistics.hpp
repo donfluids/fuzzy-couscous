@@ -5,6 +5,10 @@
 #include "physics/EOS.hpp"
 #include "physics/ViscousFlux.hpp"
 
+#ifdef BLAST_MPI
+#include <mpi.h>
+#endif
+
 namespace blast {
 
 struct VelocityStats {
@@ -37,5 +41,16 @@ struct DissipationBudget {
 // on the rest. Requires NGHOST >= 6 (we use 6 throughout).
 DissipationBudget dissipation_budget(const State& U, const Grid& g,
                                      const IdealGas& eos, const ViscousParams& vp);
+
+#ifdef BLAST_MPI
+// MPI variants: take the GLOBAL grid extent so means are divided by global
+// cell count; reduce per-component sums with MPI_Allreduce on `comm`.
+VelocityStats velocity_stats(const State& U, const IdealGas& eos,
+                             long long N_global, MPI_Comm comm);
+DissipationBudget dissipation_budget(const State& U, const Grid& g,
+                                     const IdealGas& eos,
+                                     const ViscousParams& vp,
+                                     long long N_global, MPI_Comm comm);
+#endif
 
 }  // namespace blast

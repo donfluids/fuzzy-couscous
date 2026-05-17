@@ -92,6 +92,136 @@ void ic_taylor_green_3d(State& U, const Grid& g, const IdealGas& eos,
             }
 }
 
+void ic_rogallo_3d(State& U, const Grid& g, const IdealGas& eos,
+                   Real urms, Real k_peak, Real rho_0, Real p_0, int seed) {
+    const int nx = g.nx, ny = g.ny, nz = g.nz;
+    const Real two_pi_Lx = 2.0 * M_PI / g.lx;
+    const Real two_pi_Ly = 2.0 * M_PI / g.ly;
+    const Real two_pi_Lz = 2.0 * M_PI / g.lz;
+
+    // Limit modes to a band around k_peak for performance; the Gaussian
+    // envelope drops below 1e-4 outside [k_peak/3, 3 k_peak].
+    const int k_lo_int = std::max(1, static_cast<int>(std::floor(k_peak / 3.0)));
+    const int nyquist = std::min(nx, std::min(ny, nz)) / 2;
+    const int k_hi_int = std::min(nyquist,
+                                  static_cast<int>(std::ceil(3.0 * k_peak)));
+
+    // Enumerate one half of integer k-space to avoid double-counting Hermitian
+    // pairs (k, -k). Canonical half: mz > 0, or (mz == 0 and my > 0), or
+    // (mz == 0 and my == 0 and mx > 0).
+    struct Mode {
+        Real kx, ky, kz;
+        Real amp1, amp2;       // Gaussian-random helicity amplitudes
+        Real phase1, phase2;   // uniform-random phases
+        Real e1[3], e2[3];     // unit basis vectors perpendicular to k
+    };
+    std::vector<Mode> modes;
+
+    std::mt19937 rng(static_cast<unsigned int>(seed));
+    std::normal_distribution<Real> nd(0.0, 1.0);
+    std::uniform_real_distribution<Real> ud(0.0, 2.0 * M_PI);
+
+    auto add_mode = [&](int mx, int my, int mz) {
+        const Real ki = std::sqrt(static_cast<Real>(mx*mx + my*my + mz*mz));
+        if (ki < k_lo_int - 0.5 || ki > k_hi_int + 0.5) return;
+        const Real kx = mx * two_pi_Lx;
+        const Real ky = my * two_pi_Ly;
+        const Real kz = mz * two_pi_Lz;
+        const Real Ek = std::pow(ki, 4)
+                      * std::exp(-2.0 * (ki / k_peak) * (ki / k_peak));
+        const Real amp = std::sqrt(Ek);
+
+        Mode m;
+        m.kx = kx; m.ky = ky; m.kz = kz;
+        m.amp1 = amp * nd(rng);
+        m.amp2 = amp * nd(rng);
+        m.phase1 = ud(rng);
+        m.phase2 = ud(rng);
+
+        const Real kmag = std::sqrt(kx*kx + ky*ky + kz*kz);
+        const Real khx = kx/kmag, khy = ky/kmag, khz = kz/kmag;
+        if (std::fabs(khz) < 0.9) {
+            const Real s = 1.0 / std::sqrt(khx*khx + khy*khy);
+            m.e1[0] = -khy * s; m.e1[1] = khx * s; m.e1[2] = 0.0;
+        } else {
+            const Real s = 1.0 / std::sqrt(khy*khy + khz*khz);
+            m.e1[0] = 0.0; m.e1[1] = -khz * s; m.e1[2] = khy * s;
+        }
+        // e2 = khat x e1
+        m.e2[0] = khy * m.e1[2] - khz * m.e1[1];
+        m.e2[1] = khz * m.e1[0] - khx * m.e1[2];
+        m.e2[2] = khx * m.e1[1] - khy * m.e1[0];
+
+        modes.push_back(m);
+    };
+
+    for (int mz = 0; mz <= k_hi_int; ++mz) {
+        const int my_lo = (mz == 0) ? 0 : -k_hi_int;
+        for (int my = my_lo; my <= k_hi_int; ++my) {
+            const int mx_lo = (mz == 0 && my == 0) ? 1 : -k_hi_int;
+            for (int mx = mx_lo; mx <= k_hi_int; ++mx) {
+                add_mode(mx, my, mz);
+            }
+        }
+    }
+
+    // First pass: compute the raw field and its variance so we can rescale
+    // to the target urms (closed-form normalization of the truncated mode
+    // set is messy; empirical rescale is exact).
+    std::vector<Real> u_buf(static_cast<std::size_t>(nx) * ny * nz);
+    std::vector<Real> v_buf(static_cast<std::size_t>(nx) * ny * nz);
+    std::vector<Real> w_buf(static_cast<std::size_t>(nx) * ny * nz);
+
+    Real q2_sum = 0.0;
+#pragma omp parallel for collapse(2) schedule(static) reduction(+:q2_sum)
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                const Real x = g.xc(i), y = g.yc(j), z = g.zc(k);
+                Real u = 0, v = 0, w = 0;
+                for (const auto& m : modes) {
+                    const Real phase = m.kx * x + m.ky * y + m.kz * z;
+                    const Real c1 = m.amp1 * std::cos(phase + m.phase1);
+                    const Real c2 = m.amp2 * std::cos(phase + m.phase2);
+                    u += c1 * m.e1[0] + c2 * m.e2[0];
+                    v += c1 * m.e1[1] + c2 * m.e2[1];
+                    w += c1 * m.e1[2] + c2 * m.e2[2];
+                }
+                const std::size_t idx = static_cast<std::size_t>(i)
+                    + nx * (static_cast<std::size_t>(j) + ny * k);
+                u_buf[idx] = u; v_buf[idx] = v; w_buf[idx] = w;
+                q2_sum += u*u + v*v + w*w;
+            }
+        }
+
+    // urms here is the total-magnitude rms: <|u|^2>^{1/2}, matching
+    // velocity_stats::u_rms. For isotropic turbulence, this equals
+    // sqrt(3) * per-component rms.
+    const long long N3 = static_cast<long long>(nx) * ny * nz;
+    const Real urms_actual = std::sqrt(q2_sum / N3);
+    const Real scale = (urms_actual > 0.0) ? urms / urms_actual : 1.0;
+
+    // Second pass: write scaled state into U over the FULL padded region
+    // so ghost cells start populated (the IC pattern is periodic with
+    // period L, so plain evaluation at ghost cell coordinates is exact).
+    for (int k = -U.ng(); k < nz + U.ng(); ++k)
+        for (int j = -U.ng(); j < ny + U.ng(); ++j)
+            for (int i = -U.ng(); i < nx + U.ng(); ++i) {
+                const Real x = g.xc(i), y = g.yc(j), z = g.zc(k);
+                Real u = 0, v = 0, w = 0;
+                for (const auto& m : modes) {
+                    const Real phase = m.kx * x + m.ky * y + m.kz * z;
+                    const Real c1 = m.amp1 * std::cos(phase + m.phase1);
+                    const Real c2 = m.amp2 * std::cos(phase + m.phase2);
+                    u += c1 * m.e1[0] + c2 * m.e2[0];
+                    v += c1 * m.e1[1] + c2 * m.e2[1];
+                    w += c1 * m.e1[2] + c2 * m.e2[2];
+                }
+                set_from_primitive(U, i, j, k, eos,
+                                   rho_0, u * scale, v * scale, w * scale, p_0);
+            }
+}
+
 // Real spherical harmonic Y_{4,2}(theta, phi) up to normalization.
 // theta polar from +z, phi azimuth around z. In Cartesian:
 //   Y_{4,2} ~ (3 sqrt(5) / (8 sqrt(pi))) * (x^2 - y^2) (7 z^2 - r^2) / r^4
@@ -148,10 +278,11 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real rho_blast, Real T_blast,
                         Real rho_ambient, Real T_ambient,
                         Real r_blast, Real tanh_thickness, Real Y42_amp,
-                        Real ensemble_amp, int ensemble_seed) {
-    const Real xc = g.x0 + 0.5 * g.lx;
-    const Real yc = g.y0 + 0.5 * g.ly;
-    const Real zc = g.z0 + 0.5 * g.lz;
+                        Real ensemble_amp, int ensemble_seed,
+                        Real x_center, Real y_center, Real z_center) {
+    const Real xc = std::isnan(x_center) ? g.x0 + 0.5 * g.lx : x_center;
+    const Real yc = std::isnan(y_center) ? g.y0 + 0.5 * g.ly : y_center;
+    const Real zc = std::isnan(z_center) ? g.z0 + 0.5 * g.lz : z_center;
     const Real p_blast   = rho_blast   * eos.eos.R * T_blast;
     const Real p_ambient = rho_ambient * eos.eos.R * T_ambient;
     const Real safe_thickness = std::max(tanh_thickness, 1e-12);
@@ -183,7 +314,8 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
 
 void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
                          Real rho_0, Real T_0, Real q_specific,
-                         Real r_cj, Real tanh_thickness, Real Y42_amp) {
+                         Real r_cj, Real tanh_thickness, Real Y42_amp,
+                         Real x_center, Real y_center, Real z_center) {
     const Real gamma = eos.eos.gamma;
     const Real R     = eos.eos.R;
     const Real p_0   = rho_0 * R * T_0;
@@ -204,9 +336,9 @@ void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
     const Real rho_cj = rho_0 * (gamma + 1.0) * M_D2 / (gamma * M_D2 + 1.0);
     const Real u_cj   = D * (1.0 - rho_0 / rho_cj);            // radial outward
 
-    const Real xc = g.x0 + 0.5 * g.lx;
-    const Real yc = g.y0 + 0.5 * g.ly;
-    const Real zc = g.z0 + 0.5 * g.lz;
+    const Real xc = std::isnan(x_center) ? g.x0 + 0.5 * g.lx : x_center;
+    const Real yc = std::isnan(y_center) ? g.y0 + 0.5 * g.ly : y_center;
+    const Real zc = std::isnan(z_center) ? g.z0 + 0.5 * g.lz : z_center;
     const Real safe_thickness = std::max(tanh_thickness, 1e-12);
 
     for (int k = 0; k < g.nz; ++k)

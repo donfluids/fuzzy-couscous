@@ -5,6 +5,11 @@
 #include "diagnostics/Spectra.hpp"
 #include "physics/EOS.hpp"
 
+#ifdef BLAST_MPI
+#include "parallel/Domain.hpp"
+#include <mpi.h>
+#endif
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +20,10 @@ namespace blast {
 // name is `<dir>/snapshot_<step:06d>.h5`. Each call independently opens and
 // closes the file; the companion XDMF index is regenerated on every call so
 // ParaView/VisIt picks up new snapshots without restarting.
+//
+// MPI build: pass a Domain via set_domain() before writing. Snapshots are
+// written collectively via parallel HDF5 hyperslabs; the dataset shape is
+// the GLOBAL grid (nz_g, ny_g, nx_g) and each rank writes its own subblock.
 class HDF5Writer {
 public:
     HDF5Writer(const std::string& out_dir, const std::string& run_name);
@@ -27,11 +36,22 @@ public:
     void append_spectra(const HelmholtzResult& h, const ShellSpectrum& total,
                         Real t, int step);
 
+#ifdef BLAST_MPI
+    // Bind to a Domain + Cart comm; subsequent write_snapshot calls switch
+    // to collective parallel-HDF5 hyperslab writes. The `g` passed to
+    // write_snapshot must be the GLOBAL grid in MPI mode.
+    void set_domain(const Domain* d) { domain_ = d; }
+#endif
+
 private:
     std::string out_dir_;
     std::string run_name_;
     std::vector<std::pair<int, Real>> entries_;   // step, time
     Grid grid_for_xdmf_{};                        // captured on first snapshot
+
+#ifdef BLAST_MPI
+    const Domain* domain_ = nullptr;
+#endif
 
     void update_xdmf_index_();
     std::string snapshot_path_(int step) const;

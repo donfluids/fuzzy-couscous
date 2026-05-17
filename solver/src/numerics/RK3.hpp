@@ -6,6 +6,11 @@
 #include "physics/EOS.hpp"
 #include "physics/ViscousFlux.hpp"
 
+#ifdef BLAST_MPI
+#include "parallel/Domain.hpp"
+#include "parallel/Halo.hpp"
+#endif
+
 #include <functional>
 
 namespace blast {
@@ -34,6 +39,14 @@ public:
     void step_with_source(State& U, const Grid& g, const BCSet& bc,
                           const IdealGas& eos, const ViscousParams& vp,
                           Real dt, Real t_current, const SourceCallback& src);
+
+#ifdef BLAST_MPI
+    // MPI variant: halo-exchange before applying physical BCs at each stage.
+    // The Halo object must outlive this RK3.
+    void step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
+                  const ViscousParams& vp, Real dt,
+                  const Domain& d, Halo& halo);
+#endif
 
 private:
     State U1_;

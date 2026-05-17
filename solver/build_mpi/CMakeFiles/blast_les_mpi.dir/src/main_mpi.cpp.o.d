@@ -219,10 +219,9 @@ CMakeFiles/blast_les_mpi.dir/src/main_mpi.cpp.o: \
  /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi/ompi/mpi/cxx/info_inln.h \
  /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi/ompi/mpi/cxx/win_inln.h \
  /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi/ompi/mpi/cxx/file_inln.h \
- /home/user/fuzzy-couscous/solver/src/diagnostics/Statistics.hpp \
- /home/user/fuzzy-couscous/solver/src/physics/EOS.hpp \
- /usr/include/c++/13/cmath /usr/include/math.h \
- /usr/include/x86_64-linux-gnu/bits/math-vector.h \
+ /home/user/fuzzy-couscous/solver/src/diagnostics/FFT.hpp \
+ /usr/include/c++/13/complex /usr/include/c++/13/cmath \
+ /usr/include/math.h /usr/include/x86_64-linux-gnu/bits/math-vector.h \
  /usr/include/x86_64-linux-gnu/bits/libm-simd-decl-stubs.h \
  /usr/include/x86_64-linux-gnu/bits/flt-eval-method.h \
  /usr/include/x86_64-linux-gnu/bits/fp-logb.h \
@@ -243,18 +242,18 @@ CMakeFiles/blast_les_mpi.dir/src/main_mpi.cpp.o: \
  /usr/include/c++/13/tr1/modified_bessel_func.tcc \
  /usr/include/c++/13/tr1/poly_hermite.tcc \
  /usr/include/c++/13/tr1/poly_laguerre.tcc \
- /usr/include/c++/13/tr1/riemann_zeta.tcc \
- /home/user/fuzzy-couscous/solver/src/physics/ViscousFlux.hpp \
- /home/user/fuzzy-couscous/solver/src/ic/Canonical.hpp \
- /home/user/fuzzy-couscous/solver/src/io/HDF5Writer.hpp \
- /home/user/fuzzy-couscous/solver/src/diagnostics/Spectra.hpp \
- /home/user/fuzzy-couscous/solver/src/diagnostics/FFT.hpp \
- /usr/include/c++/13/complex /usr/include/c++/13/sstream \
+ /usr/include/c++/13/tr1/riemann_zeta.tcc /usr/include/c++/13/sstream \
  /usr/include/c++/13/bits/sstream.tcc /usr/include/c++/13/vector \
  /usr/include/c++/13/bits/stl_uninitialized.h \
  /usr/include/c++/13/bits/stl_vector.h \
  /usr/include/c++/13/bits/stl_bvector.h \
  /usr/include/c++/13/bits/vector.tcc \
+ /home/user/fuzzy-couscous/solver/src/diagnostics/Spectra.hpp \
+ /home/user/fuzzy-couscous/solver/src/diagnostics/Statistics.hpp \
+ /home/user/fuzzy-couscous/solver/src/physics/EOS.hpp \
+ /home/user/fuzzy-couscous/solver/src/physics/ViscousFlux.hpp \
+ /home/user/fuzzy-couscous/solver/src/ic/Canonical.hpp \
+ /home/user/fuzzy-couscous/solver/src/io/HDF5Writer.hpp \
  /home/user/fuzzy-couscous/solver/src/io/Log.hpp \
  /usr/include/spdlog/spdlog.h /usr/include/spdlog/common.h \
  /usr/include/spdlog/tweakme.h /usr/include/spdlog/details/null_mutex.h \

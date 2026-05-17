@@ -5,6 +5,10 @@
 #include "core/Types.hpp"
 #include "diagnostics/FFT.hpp"
 
+#ifdef BLAST_MPI
+#include "parallel/Domain.hpp"
+#endif
+
 #include <vector>
 
 namespace blast {
@@ -39,5 +43,16 @@ ShellSpectrum velocity_spectrum(const State& U, const Grid& g, FFT3DPlan& plan);
 // Returns the partitioned energies and per-shell spectra.
 HelmholtzResult helmholtz_decompose(const State& U, const Grid& g,
                                     FFT3DPlan& plan);
+
+#ifdef BLAST_MPI
+// MPI variants (v1): gather the global velocity field to rank 0 and call
+// the serial FFT. Returns populated result on rank 0; empty (k.size()==0)
+// on other ranks. NOT scalable to 768^3 -- gathers O(N^3) data and uses
+// O(N^3) memory on rank 0. The proper FFTW3-MPI pencil decomp is a TODO.
+ShellSpectrum velocity_spectrum_mpi(const State& U, const Grid& global_g,
+                                    FFT3DPlan& plan, const Domain& d);
+HelmholtzResult helmholtz_decompose_mpi(const State& U, const Grid& global_g,
+                                        FFT3DPlan& plan, const Domain& d);
+#endif
 
 }  // namespace blast

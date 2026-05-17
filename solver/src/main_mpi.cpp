@@ -2,6 +2,8 @@
 #include "core/Config.hpp"
 #include "core/Grid.hpp"
 #include "core/State.hpp"
+#include "diagnostics/FFT.hpp"
+#include "diagnostics/Spectra.hpp"
 #include "diagnostics/Statistics.hpp"
 #include "ic/Canonical.hpp"
 #include "io/HDF5Writer.hpp"
@@ -151,9 +153,24 @@ int main(int argc, char** argv) {
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
 
+    // FFT plan for spectra: rank-0-only serial FFT on the global grid (v1).
+    // Allocated on every rank but only rank 0 actually uses it; the other
+    // ranks' plans are cheap to construct and harmless.
+    std::unique_ptr<FFT3DPlan> fft_plan;
+    if (c.output.write_spectra || c.output.write_helmholtz)
+        fft_plan = std::make_unique<FFT3DPlan>(global_g.nx, global_g.ny, global_g.nz);
+
     auto log_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
         auto b = dissipation_budget(U, local_g, eos, vp, N_global, domain.comm());
+        HelmholtzResult h{};
+        ShellSpectrum sp{};
+        if (c.output.write_helmholtz || c.output.write_spectra)
+            h = helmholtz_decompose_mpi(U, global_g, *fft_plan, domain);
+        if (c.output.write_spectra) {
+            sp = velocity_spectrum_mpi(U, global_g, *fft_plan, domain);
+            if (world_rank == 0) writer.append_spectra(h, sp, t, step);
+        }
         if (world_rank == 0) {
             stats_file << step << ',' << t << ',' << dt << ','
                        << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
@@ -162,9 +179,10 @@ int main(int argc, char** argv) {
                        << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << '\n';
             stats_file.flush();
             BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
-                       "eps_sol={:.3e} eps_dil={:.3e}",
+                       "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e}",
                        step, t, dt, s.ke_total, s.tke, s.M_t,
-                       b.eps_sol, b.eps_dil);
+                       b.eps_sol, b.eps_dil,
+                       (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0));
         }
     };
 

@@ -1,0 +1,60 @@
+Start testing: May 17 12:14 UTC
+----------------------------------------------------------
+2/4 Testing: mpi_halo_1
+2/4 Test: mpi_halo_1
+Command: "/usr/bin/mpiexec" "--oversubscribe" "-n" "1" "/home/user/fuzzy-couscous/solver/build_mpi/tests/test_mpi_halo"
+Directory: /home/user/fuzzy-couscous/solver/build_mpi/tests
+"mpi_halo_1" start time: May 17 12:14 UTC
+Output:
+----------------------------------------------------------
+test1 periodic halo: PASS (failures=0)
+test2 slip-wall face count: PASS (got=6 expected=6)
+test3 cell-count sum: PASS (got=5049 expected=5049)
+OVERALL: PASS (fail_count=0, ranks=1)
+<end of output>
+Test time =   0.33 sec
+----------------------------------------------------------
+Test Passed.
+"mpi_halo_1" end time: May 17 12:14 UTC
+"mpi_halo_1" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/4 Testing: mpi_halo_2
+3/4 Test: mpi_halo_2
+Command: "/usr/bin/mpiexec" "--oversubscribe" "-n" "2" "/home/user/fuzzy-couscous/solver/build_mpi/tests/test_mpi_halo"
+Directory: /home/user/fuzzy-couscous/solver/build_mpi/tests
+"mpi_halo_2" start time: May 17 12:14 UTC
+Output:
+----------------------------------------------------------
+test1 periodic halo: PASS (failures=0)
+test2 slip-wall face count: PASS (got=10 expected=10)
+test3 cell-count sum: PASS (got=5049 expected=5049)
+OVERALL: PASS (fail_count=0, ranks=2)
+<end of output>
+Test time =   0.34 sec
+----------------------------------------------------------
+Test Passed.
+"mpi_halo_2" end time: May 17 12:14 UTC
+"mpi_halo_2" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/4 Testing: mpi_halo_4
+4/4 Test: mpi_halo_4
+Command: "/usr/bin/mpiexec" "--oversubscribe" "-n" "4" "/home/user/fuzzy-couscous/solver/build_mpi/tests/test_mpi_halo"
+Directory: /home/user/fuzzy-couscous/solver/build_mpi/tests
+"mpi_halo_4" start time: May 17 12:14 UTC
+Output:
+----------------------------------------------------------
+test1 periodic halo: PASS (failures=0)
+test2 slip-wall face count: PASS (got=16 expected=16)
+test3 cell-count sum: PASS (got=5049 expected=5049)
+OVERALL: PASS (fail_count=0, ranks=4)
+<end of output>
+Test time =   0.50 sec
+----------------------------------------------------------
+Test Passed.
+"mpi_halo_4" end time: May 17 12:14 UTC
+"mpi_halo_4" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: May 17 12:14 UTC

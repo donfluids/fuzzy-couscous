@@ -19,6 +19,8 @@ paper/figures/      committed figures for the manuscript revisions
 
 ## Build & test
 
+### Serial (OpenMP only)
+
 ```bash
 cd solver
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -30,13 +32,43 @@ Requires: GCC ≥ 13 or Clang ≥ 17, CMake ≥ 3.20, FFTW3 (`libfftw3-dev`), HD
 (`libhdf5-dev`), spdlog (`libspdlog-dev`), toml++ (`libtomlplusplus-dev`),
 GoogleTest, OpenMP.
 
+### MPI (OpenMPI)
+
+```bash
+cmake -S solver -B build_mpi -DBLAST_MPI=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build_mpi -j
+ctest --test-dir build_mpi --output-on-failure   # also runs the MPI halo test at N = 1, 2, 4
+mpirun -n 4 ./build_mpi/blast_les_mpi solver/examples/paper_case1.toml
+```
+
+Adds: OpenMPI (`libopenmpi-dev`, `openmpi-bin`), parallel HDF5
+(`libhdf5-openmpi-dev`), FFTW3-MPI (`libfftw3-mpi-dev`). Builds a second
+library `blast_core_mpi` and a second executable `blast_les_mpi` alongside
+the serial ones; the serial path is unaffected.
+
 ## Run a simulation
+
+### Serial
 
 ```bash
 ./build/blast_les examples/paper_case1.toml          # production: 256³ chamber
 ./build/blast_les examples/tgv_re1600_64_hyper2.toml # TGV Re=1600 LES on 64³
 ./build/blast_les examples/chamber_smoke.toml        # 32³ smoke test
 ```
+
+### MPI
+
+```bash
+mpirun -n 4  ./build_mpi/blast_les_mpi examples/paper_case1.toml
+mpirun -n 16 ./build_mpi/blast_les_mpi examples/paper_case1.toml
+```
+
+3D Cartesian decomposition via `MPI_Dims_create` chooses `(npx, npy, npz)`
+automatically; `MPI_Cart_create` builds the topology and sets axis
+periodicity from the TOML `[bc]` block. Snapshots are written as a single
+HDF5 file per dump (collective parallel HDF5 hyperslabs); the spectra HDF5
+is gathered to rank 0 and processed there (production-scale FFTW3-MPI
+pencil decomposition is a follow-up).
 
 Outputs go to `<out_dir>` defined in the TOML: HDF5 snapshots + an XDMF
 time-series index (ParaView-loadable), a stats CSV, and a spectra HDF5.
@@ -75,7 +107,7 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 - enstrophy `⟨|ω|²⟩` and dilatation-squared `⟨(∇·u)²⟩` independently
 - Helmholtz solenoidal/dilatational kinetic-energy split + per-shell spectra
 
-## Test suite (44 tests, all passing)
+## Test suite (44 serial + 3 MPI rank counts, all passing)
 
 | Suite | What it verifies | Wall (9965 est.) |
 |---|---|---|
@@ -87,10 +119,27 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 | **Hyperdissipation** (3) — operator value, eigenvalue decay, off-when-disabled | discrete `∇⁴` matches analytic `k⁴` damping; SSP-RK3 integration preserves the exp(−λ t) eigenvalue decay; zero coeff bit-exact identity | ~10 s |
 | **SlipWall** (2) — mass+energy conservation, acoustic round-trip | inviscid slip walls conserve mass and total energy to < 1e-10 relative; small-amplitude acoustic pulse returns to its starting position with > 50% amplitude after one round-trip, no negative-density ringing | ~5 s |
 | **ShuOsher1D** (2) — post-shock oscillations, refinement | Mach-3 shock interacting with sinusoidal density retains the post-shock fine-scale oscillations; 200-cell vs 800-cell self-converged reference L1 < 0.25 | ~3 s |
+| **MPI halo** (1 binary × 3 rank counts) — periodic exchange + face count + cell sum | analytic continuation across 2/4/8-rank partitions to round-off; physical-face count matches `2(npx npy + npx npz + npy npz)`; sum of local cell counts equals global Nx·Ny·Nz with non-divisible factors | < 1 s |
 
 Total runtime on this sandbox (4 cores, single NUMA): ~95 minutes,
 dominated by MMS3D + SlipWall. On the 9965 with 192 threads the suite
 should run in well under a minute.
+
+## MPI implementation details
+
+| Component | Implementation |
+|---|---|
+| Domain decomposition | `Domain` (parallel/Domain.cpp): `MPI_Dims_create` + `MPI_Cart_create` build a 3D Cartesian comm with per-axis periodicity from `BCSet`. Uneven cell counts handled (first `N % Np` ranks get one extra cell). |
+| Halo exchange | `Halo` (parallel/Halo.cpp): six derived MPI subarray datatypes cached at construction; `exchange()` posts `MPI_Isend` + `MPI_Irecv` per variable per face and finishes with one `MPI_Waitall`. 30 messages per call (5 conserved variables × 6 faces). |
+| BC dispatch | `apply_bcs(U, bc, Domain&)` (bc/BC.cpp): only fills physical-face ghost cells, leaving internal partition faces to the halo exchange. |
+| Time step reduction | `max_dt_hyperbolic(..., MPI_Comm)` and `max_dt_viscous(..., MPI_Comm)` (numerics/RHS.cpp): `MPI_Allreduce(MIN)` on local dt. |
+| Statistics reduction | `velocity_stats(..., N_global, MPI_Comm)` and `dissipation_budget(..., N_global, MPI_Comm)` (diagnostics/Statistics.cpp): `MPI_Allreduce(SUM)` on partial sums, then divide by global cell count. |
+| Snapshot I/O | `HDF5Writer::set_domain(Domain*)` (io/HDF5Writer.cpp): single HDF5 file per dump, collective writes via `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio(...COLLECTIVE)` with hyperslabs from `Domain::global_offset`. Independent-mode scalar writes from rank 0 only. |
+| Spectra (v1) | `velocity_spectrum_mpi` / `helmholtz_decompose_mpi` (diagnostics/Spectra.cpp): gather to rank 0 + serial FFTW3 on the global grid. **Not scalable to 768³**; FFTW3-MPI pencil decomp is a flagged TODO. |
+| IC global-center | sphere_blast / cj_detonation ICs take optional explicit `(x_c, y_c, z_c)`; the MPI driver passes the global domain center so every rank places the IC at the same physical location. |
+
+End-to-end verification: 2-rank and 4-rank `examples/mpi_smoke.toml` runs
+are **bit-identical to serial** for KE, tke, M_t, dt at every step.
 
 ## TGV at Re=1600 on 64³ — Kolmogorov recovery
 

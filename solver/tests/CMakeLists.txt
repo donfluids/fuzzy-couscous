@@ -37,6 +37,9 @@ if(BLAST_MPI)
     add_executable(test_mpi_halo test_mpi_halo.cpp)
     target_link_libraries(test_mpi_halo PRIVATE blast_core_mpi)
 
+    add_executable(test_mpi_bitexact test_mpi_bitexact.cpp)
+    target_link_libraries(test_mpi_bitexact PRIVATE blast_core_mpi)
+
     # Run under mpirun at 1, 2, 4 ranks. OpenMPI in containers (Docker/etc.)
     # needs --oversubscribe + the root override.
     set(MPI_ENV "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1")
@@ -47,6 +50,14 @@ if(BLAST_MPI)
                     -n ${N}
                     $<TARGET_FILE:test_mpi_halo>)
         set_tests_properties(mpi_halo_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_bitexact_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_bitexact>)
+        set_tests_properties(mpi_bitexact_${N} PROPERTIES
             ENVIRONMENT "${MPI_ENV}")
     endforeach()
 endif()

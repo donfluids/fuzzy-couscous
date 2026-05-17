@@ -6,6 +6,10 @@
 #include "physics/EOS.hpp"
 #include "physics/ViscousFlux.hpp"
 
+#ifdef BLAST_MPI
+#include <mpi.h>
+#endif
+
 namespace blast {
 
 // Computes L(U) = -div F  (inviscid, ideal-gas). Writes into Rhs.
@@ -27,5 +31,14 @@ Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
 // dt = cfl * dx^2 / nu where nu = mu/rho_min.
 Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
                     Real cfl);
+
+#ifdef BLAST_MPI
+// MPI-aware dt: compute the local minimum, then MPI_Allreduce(..., MIN, comm)
+// to get the global one. Same numerics as the serial version.
+Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
+                       Real cfl, MPI_Comm comm);
+Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
+                    Real cfl, MPI_Comm comm);
+#endif
 
 }  // namespace blast

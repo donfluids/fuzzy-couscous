@@ -148,10 +148,11 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real rho_blast, Real T_blast,
                         Real rho_ambient, Real T_ambient,
                         Real r_blast, Real tanh_thickness, Real Y42_amp,
-                        Real ensemble_amp, int ensemble_seed) {
-    const Real xc = g.x0 + 0.5 * g.lx;
-    const Real yc = g.y0 + 0.5 * g.ly;
-    const Real zc = g.z0 + 0.5 * g.lz;
+                        Real ensemble_amp, int ensemble_seed,
+                        Real x_center, Real y_center, Real z_center) {
+    const Real xc = std::isnan(x_center) ? g.x0 + 0.5 * g.lx : x_center;
+    const Real yc = std::isnan(y_center) ? g.y0 + 0.5 * g.ly : y_center;
+    const Real zc = std::isnan(z_center) ? g.z0 + 0.5 * g.lz : z_center;
     const Real p_blast   = rho_blast   * eos.eos.R * T_blast;
     const Real p_ambient = rho_ambient * eos.eos.R * T_ambient;
     const Real safe_thickness = std::max(tanh_thickness, 1e-12);
@@ -183,7 +184,8 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
 
 void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
                          Real rho_0, Real T_0, Real q_specific,
-                         Real r_cj, Real tanh_thickness, Real Y42_amp) {
+                         Real r_cj, Real tanh_thickness, Real Y42_amp,
+                         Real x_center, Real y_center, Real z_center) {
     const Real gamma = eos.eos.gamma;
     const Real R     = eos.eos.R;
     const Real p_0   = rho_0 * R * T_0;
@@ -204,9 +206,9 @@ void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
     const Real rho_cj = rho_0 * (gamma + 1.0) * M_D2 / (gamma * M_D2 + 1.0);
     const Real u_cj   = D * (1.0 - rho_0 / rho_cj);            // radial outward
 
-    const Real xc = g.x0 + 0.5 * g.lx;
-    const Real yc = g.y0 + 0.5 * g.ly;
-    const Real zc = g.z0 + 0.5 * g.lz;
+    const Real xc = std::isnan(x_center) ? g.x0 + 0.5 * g.lx : x_center;
+    const Real yc = std::isnan(y_center) ? g.y0 + 0.5 * g.ly : y_center;
+    const Real zc = std::isnan(z_center) ? g.z0 + 0.5 * g.lz : z_center;
     const Real safe_thickness = std::max(tanh_thickness, 1e-12);
 
     for (int k = 0; k < g.nz; ++k)

@@ -305,6 +305,24 @@ Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
     return cfl * h2_min / nu_max;
 }
 
+#ifdef BLAST_MPI
+Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
+                       Real cfl, MPI_Comm comm) {
+    Real dt_local = max_dt_hyperbolic(U, g, eos, cfl);
+    Real dt_global = dt_local;
+    MPI_Allreduce(&dt_local, &dt_global, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return dt_global;
+}
+
+Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
+                    Real cfl, MPI_Comm comm) {
+    Real dt_local = max_dt_viscous(U, g, vp, cfl);
+    Real dt_global = dt_local;
+    MPI_Allreduce(&dt_local, &dt_global, 1, MPI_DOUBLE, MPI_MIN, comm);
+    return dt_global;
+}
+#endif
+
 namespace {
 
 // Cell-centered Stokes-form viscous flux for direction d, computed from

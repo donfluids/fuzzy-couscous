@@ -1,0 +1,53 @@
+# Minimal MPI smoke run: ~5 steps, single snapshot at end. Used to verify
+# the parallel HDF5 / halo-exchange / Allreduce path works end-to-end on
+# multiple ranks without spending real wall time.
+run_name = "mpi_smoke"
+
+[grid]
+nx = 32
+ny = 32
+nz = 32
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.1
+rho_B          = 10.0
+T_B            = 100.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2
+tanh_thickness = 0.047
+
+[physics]
+gamma = 1.4
+R     = 1.0
+mu    = 0.0
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.001
+dt_max         = 1.0
+max_steps      = 100
+
+[output]
+out_dir          = "out_mpi_smoke"
+snapshot_every   = 5
+stats_every      = 1
+checkpoint_every = 0
+write_spectra    = false
+write_helmholtz  = false

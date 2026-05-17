@@ -2,7 +2,7 @@
 
 #include "io/Log.hpp"
 
-#include <hdf5/serial/hdf5.h>
+#include <hdf5.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -61,16 +61,16 @@ std::string HDF5Writer::snapshot_path_(int step) const {
 
 void HDF5Writer::write_snapshot(const State& U, const Grid& g,
                                 const IdealGas& eos, Real t, int step) {
-    const int nx = g.nx, ny = g.ny, nz = g.nz;
-    const std::size_t N = static_cast<std::size_t>(nx) * ny * nz;
+    const int nx_l = U.nx(), ny_l = U.ny(), nz_l = U.nz();
+    const std::size_t N_l = static_cast<std::size_t>(nx_l) * ny_l * nz_l;
 
-    std::vector<double> rho(N), u(N), v(N), w(N), p(N), T(N);
+    std::vector<double> rho(N_l), u(N_l), v(N_l), w(N_l), p(N_l), T(N_l);
 #pragma omp parallel for collapse(2) schedule(static)
-    for (int k = 0; k < nz; ++k)
-        for (int j = 0; j < ny; ++j)
-            for (int i = 0; i < nx; ++i) {
+    for (int k = 0; k < nz_l; ++k)
+        for (int j = 0; j < ny_l; ++j)
+            for (int i = 0; i < nx_l; ++i) {
                 const std::size_t idx = static_cast<std::size_t>(i)
-                    + nx * (static_cast<std::size_t>(j) + ny * k);
+                    + nx_l * (static_cast<std::size_t>(j) + ny_l * k);
                 const Real r  = U[RHO ](i, j, k);
                 const Real ui = U[RHOU](i, j, k) / r;
                 const Real vi = U[RHOV](i, j, k) / r;
@@ -86,6 +86,104 @@ void HDF5Writer::write_snapshot(const State& U, const Grid& g,
             }
 
     const std::string path = snapshot_path_(step);
+
+#ifdef BLAST_MPI
+    if (domain_) {
+        // Collective parallel-HDF5 write with hyperslabs.
+        auto ext = domain_->global_extent();
+        auto off = domain_->global_offset(g);
+
+        hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
+        H5Pset_fapl_mpio(fapl, domain_->comm(), MPI_INFO_NULL);
+        hid_t file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
+        H5Pclose(fapl);
+        if (file < 0) {
+            BLAST_ERROR("HDF5(MPI): failed to create {}", path);
+            return;
+        }
+
+        // Parallel HDF5: H5Dcreate is collective, so EVERY rank must call
+        // even for scalar metadata. Independent-mode write to a 1-element
+        // dataset from rank 0; other ranks select an empty space.
+        auto write_scalar_collective = [&](const char* name, double value) {
+            hsize_t one = 1;
+            hid_t space = H5Screate_simple(1, &one, nullptr);
+            hid_t dset = H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, space,
+                                    H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+            hid_t dxpl_indep = H5Pcreate(H5P_DATASET_XFER);
+            H5Pset_dxpl_mpio(dxpl_indep, H5FD_MPIO_INDEPENDENT);
+            if (domain_->rank() == 0) {
+                H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+                         dxpl_indep, &value);
+            }
+            H5Pclose(dxpl_indep);
+            H5Dclose(dset);
+            H5Sclose(space);
+        };
+        write_scalar_collective("time", t);
+        write_scalar_collective("dx",   g.dx());
+        write_scalar_collective("dy",   g.dy());
+        write_scalar_collective("dz",   g.dz());
+        write_scalar_collective("x0",   g.x0);
+        write_scalar_collective("y0",   g.y0);
+        write_scalar_collective("z0",   g.z0);
+
+        // For each 3D field, define global (nz_g, ny_g, nx_g) dataset
+        // and write this rank's hyperslab.
+        hsize_t file_dims[3] = {
+            static_cast<hsize_t>(ext[2]),
+            static_cast<hsize_t>(ext[1]),
+            static_cast<hsize_t>(ext[0])
+        };
+        hsize_t mem_dims[3] = {
+            static_cast<hsize_t>(nz_l),
+            static_cast<hsize_t>(ny_l),
+            static_cast<hsize_t>(nx_l)
+        };
+        hsize_t file_offset[3] = {
+            static_cast<hsize_t>(off[2]),
+            static_cast<hsize_t>(off[1]),
+            static_cast<hsize_t>(off[0])
+        };
+
+        hid_t dxpl = H5Pcreate(H5P_DATASET_XFER);
+        H5Pset_dxpl_mpio(dxpl, H5FD_MPIO_COLLECTIVE);
+
+        auto write_field = [&](const char* name, const std::vector<double>& data) {
+            hid_t fspace = H5Screate_simple(3, file_dims, nullptr);
+            hid_t dset = H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, fspace,
+                                    H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+            H5Sselect_hyperslab(fspace, H5S_SELECT_SET, file_offset, nullptr,
+                                mem_dims, nullptr);
+            hid_t mspace = H5Screate_simple(3, mem_dims, nullptr);
+            H5Dwrite(dset, H5T_NATIVE_DOUBLE, mspace, fspace, dxpl, data.data());
+            H5Sclose(mspace);
+            H5Dclose(dset);
+            H5Sclose(fspace);
+        };
+
+        write_field("density",     rho);
+        write_field("velocity_x",  u);
+        write_field("velocity_y",  v);
+        write_field("velocity_z",  w);
+        write_field("pressure",    p);
+        write_field("temperature", T);
+
+        H5Pclose(dxpl);
+        H5Fclose(file);
+
+        if (domain_->rank() == 0) {
+            entries_.emplace_back(step, t);
+            // grid_for_xdmf_ uses the GLOBAL grid for ParaView.
+            Grid g_global = g;
+            g_global.nx = ext[0]; g_global.ny = ext[1]; g_global.nz = ext[2];
+            grid_for_xdmf_ = g_global;
+            update_xdmf_index_();
+        }
+        return;
+    }
+#endif
+
     hid_t file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     if (file < 0) {
         BLAST_ERROR("HDF5: failed to create {}", path);
@@ -99,12 +197,12 @@ void HDF5Writer::write_snapshot(const State& U, const Grid& g,
     write_scalar(file, "y0",   g.y0);
     write_scalar(file, "z0",   g.z0);
 
-    write_dataset_3d(file, "density",     nx, ny, nz, rho);
-    write_dataset_3d(file, "velocity_x",  nx, ny, nz, u);
-    write_dataset_3d(file, "velocity_y",  nx, ny, nz, v);
-    write_dataset_3d(file, "velocity_z",  nx, ny, nz, w);
-    write_dataset_3d(file, "pressure",    nx, ny, nz, p);
-    write_dataset_3d(file, "temperature", nx, ny, nz, T);
+    write_dataset_3d(file, "density",     nx_l, ny_l, nz_l, rho);
+    write_dataset_3d(file, "velocity_x",  nx_l, ny_l, nz_l, u);
+    write_dataset_3d(file, "velocity_y",  nx_l, ny_l, nz_l, v);
+    write_dataset_3d(file, "velocity_z",  nx_l, ny_l, nz_l, w);
+    write_dataset_3d(file, "pressure",    nx_l, ny_l, nz_l, p);
+    write_dataset_3d(file, "temperature", nx_l, ny_l, nz_l, T);
     H5Fclose(file);
 
     entries_.emplace_back(step, t);

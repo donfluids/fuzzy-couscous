@@ -1,0 +1,57 @@
+run_name = "chamber_smoke"
+
+[grid]
+nx = 64
+ny = 64
+nz = 64
+lx = 0.5
+ly = 0.5
+lz = 0.5
+x0 = -0.25
+y0 = -0.25
+z0 = -0.25
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type    = "tophat_sphere"
+r0      = 0.046
+rho_B   = 0.01225
+T_B     = 28815.0
+rho_0   = 0.001225
+T_0     = 288.15
+Y42_amp = 0.2
+
+[physics]
+gamma     = 1.4
+R         = 287.05
+mu        = 1.8e-5
+prandtl   = 0.71
+bulk_visc = 0.0
+
+[afp]
+enabled = true
+r_order = 4
+C_mu    = 0.002
+C_beta  = 1.0
+C_kappa = 0.01
+
+[time]
+cfl_hyperbolic = 0.5
+cfl_viscous    = 0.25
+t_end          = 0.01
+dt_max         = 1e-5
+max_steps      = 100000
+
+[output]
+out_dir         = "out_chamber_smoke"
+snapshot_every  = 200
+stats_every     = 5
+write_spectra   = true
+write_helmholtz = true

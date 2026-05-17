@@ -2,7 +2,7 @@
 
 #include "io/Log.hpp"
 
-#include <hdf5/serial/hdf5.h>
+#include <hdf5.h>
 
 #include <stdexcept>
 #include <vector>

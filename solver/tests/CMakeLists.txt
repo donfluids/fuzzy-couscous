@@ -32,3 +32,21 @@ add_test(NAME unit_tests
 # Make fixture configs available to tests at the configured location.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/fixtures/example.toml
                ${CMAKE_CURRENT_BINARY_DIR}/fixtures/example.toml COPYONLY)
+
+if(BLAST_MPI)
+    add_executable(test_mpi_halo test_mpi_halo.cpp)
+    target_link_libraries(test_mpi_halo PRIVATE blast_core_mpi)
+
+    # Run under mpirun at 1, 2, 4 ranks. OpenMPI in containers (Docker/etc.)
+    # needs --oversubscribe + the root override.
+    set(MPI_ENV "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1")
+    foreach(N 1 2 4)
+        add_test(NAME mpi_halo_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_halo>)
+        set_tests_properties(mpi_halo_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+    endforeach()
+endif()

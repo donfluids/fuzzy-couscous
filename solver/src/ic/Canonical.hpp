@@ -5,6 +5,8 @@
 #include "core/State.hpp"
 #include "physics/EOS.hpp"
 
+#include <limits>
+
 namespace blast {
 
 // Set U from primitive (rho, u, v, w, p).
@@ -36,7 +38,14 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real rho_blast, Real T_blast,
                         Real rho_ambient, Real T_ambient,
                         Real r_blast, Real tanh_thickness, Real Y42_amp,
-                        Real ensemble_amp = 0.0, int ensemble_seed = 0);
+                        Real ensemble_amp = 0.0, int ensemble_seed = 0,
+                        // Explicit sphere center; if NaN, the local grid
+                        // center g.x0+lx/2 is used. MPI callers must pass
+                        // the GLOBAL center so every rank places the
+                        // sphere at the same physical location.
+                        Real x_center = std::numeric_limits<Real>::quiet_NaN(),
+                        Real y_center = std::numeric_limits<Real>::quiet_NaN(),
+                        Real z_center = std::numeric_limits<Real>::quiet_NaN());
 
 // Chapman-Jouguet detonation initial condition (addresses reviewer M9).
 // At t=0 a spherical region of radius `r_cj` contains gas in the CJ state
@@ -51,7 +60,10 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
 // release than the top-hat / smoothed pressure sphere.
 void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
                          Real rho_0, Real T_0, Real q_specific,
-                         Real r_cj, Real tanh_thickness, Real Y42_amp);
+                         Real r_cj, Real tanh_thickness, Real Y42_amp,
+                         Real x_center = std::numeric_limits<Real>::quiet_NaN(),
+                         Real y_center = std::numeric_limits<Real>::quiet_NaN(),
+                         Real z_center = std::numeric_limits<Real>::quiet_NaN());
 
 // Smooth density wave for spatial-order verification:
 //   rho = 1 + A sin(2 pi k x), u = u0, p = 1.

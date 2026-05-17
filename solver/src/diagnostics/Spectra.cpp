@@ -445,6 +445,353 @@ HelmholtzResult helmholtz_decompose_mpi(const State& U, const Grid& global_g,
     return r;
 }
 
+// ----------------------------------------------------------------------------
+// v2: Distributed FFTW3-MPI slab decomposition. Each rank handles
+// `plan.local_nz()` z-planes of the global field. Redistribution from the
+// 3D Cartesian decomposition to the 1D z-slab layout uses MPI_Alltoallv.
+// All ranks return the same populated result via MPI_Allreduce of the bins.
+// ----------------------------------------------------------------------------
+
+namespace {
+
+struct CartDesc {
+    int i_off, j_off, k_off;
+    int nx, ny, nz;
+};
+struct SlabDesc {
+    int k_start, k_count;
+};
+
+void gather_cart_descs(const Domain& d, const Grid& global,
+                       std::vector<CartDesc>& out) {
+    Grid lg = d.local_grid(global);
+    auto off = d.global_offset(global);
+    int my[6] = {
+        static_cast<int>(off[0]), static_cast<int>(off[1]), static_cast<int>(off[2]),
+        lg.nx, lg.ny, lg.nz};
+    std::vector<int> buf(static_cast<std::size_t>(d.size()) * 6);
+    MPI_Allgather(my, 6, MPI_INT, buf.data(), 6, MPI_INT, d.comm());
+    out.resize(static_cast<std::size_t>(d.size()));
+    for (int r = 0; r < d.size(); ++r) {
+        out[r].i_off = buf[6*r + 0];
+        out[r].j_off = buf[6*r + 1];
+        out[r].k_off = buf[6*r + 2];
+        out[r].nx    = buf[6*r + 3];
+        out[r].ny    = buf[6*r + 4];
+        out[r].nz    = buf[6*r + 5];
+    }
+}
+
+void gather_slab_descs(const FFT3DPlanMPI& plan, int size,
+                       std::vector<SlabDesc>& out) {
+    int my[2] = {plan.local_z_start(), plan.local_nz()};
+    std::vector<int> buf(static_cast<std::size_t>(size) * 2);
+    MPI_Allgather(my, 2, MPI_INT, buf.data(), 2, MPI_INT, plan.comm());
+    out.resize(static_cast<std::size_t>(size));
+    for (int r = 0; r < size; ++r) {
+        out[r].k_start = buf[2*r + 0];
+        out[r].k_count = buf[2*r + 1];
+    }
+}
+
+// Redistribute one velocity component from the 3D Cartesian layout
+// (interior cells of U, packed via pack_velocity_component_local) into the
+// FFTW slab buffer. The output respects the in-place r2c padding so the
+// transform can be executed straight away.
+void redistribute_cart_to_slab(const std::vector<double>& local_buf,
+                               const std::vector<CartDesc>& cart,
+                               const std::vector<SlabDesc>& slab,
+                               FFT3DPlanMPI& plan,
+                               const Domain& d) {
+    const int size = d.size();
+    const int my_rank = d.rank();
+    const CartDesc& my = cart[my_rank];
+    const SlabDesc& mys = slab[my_rank];
+    const int nx_g_plan = plan.nx_global();
+    const int ny_g_plan = plan.ny_global();
+    const int row_stride   = plan.real_row_stride();
+    const std::size_t plane_stride =
+        static_cast<std::size_t>(ny_g_plan) * row_stride;
+
+    std::vector<int> send_counts(size, 0), send_displs(size, 0);
+    std::vector<int> recv_counts(size, 0), recv_displs(size, 0);
+    long long total_send = 0, total_recv = 0;
+
+    for (int r = 0; r < size; ++r) {
+        const int sl = slab[r].k_start;
+        const int sh = sl + slab[r].k_count;
+        const int kk_lo = std::max(my.k_off, sl);
+        const int kk_hi = std::min(my.k_off + my.nz, sh);
+        const int kk_n  = std::max(0, kk_hi - kk_lo);
+        send_counts[r] = my.nx * my.ny * kk_n;
+        send_displs[r] = static_cast<int>(total_send);
+        total_send += send_counts[r];
+    }
+    for (int s = 0; s < size; ++s) {
+        const int kk_lo = std::max(cart[s].k_off, mys.k_start);
+        const int kk_hi = std::min(cart[s].k_off + cart[s].nz,
+                                   mys.k_start + mys.k_count);
+        const int kk_n  = std::max(0, kk_hi - kk_lo);
+        recv_counts[s] = cart[s].nx * cart[s].ny * kk_n;
+        recv_displs[s] = static_cast<int>(total_recv);
+        total_recv += recv_counts[s];
+    }
+
+    std::vector<double> send_buf(static_cast<std::size_t>(total_send));
+    std::vector<double> recv_buf(static_cast<std::size_t>(total_recv));
+
+    // Pack send buffer.
+    for (int r = 0; r < size; ++r) {
+        if (send_counts[r] == 0) continue;
+        const int sl = slab[r].k_start;
+        const int sh = sl + slab[r].k_count;
+        const int kk_lo = std::max(my.k_off, sl);
+        const int kk_hi = std::min(my.k_off + my.nz, sh);
+        double* dst = send_buf.data() + send_displs[r];
+        std::size_t p = 0;
+        for (int k_g = kk_lo; k_g < kk_hi; ++k_g) {
+            const int k_loc = k_g - my.k_off;
+            for (int j_loc = 0; j_loc < my.ny; ++j_loc) {
+                const std::size_t row_base = static_cast<std::size_t>(my.nx)
+                    * (static_cast<std::size_t>(j_loc)
+                       + static_cast<std::size_t>(my.ny) * k_loc);
+                for (int i_loc = 0; i_loc < my.nx; ++i_loc) {
+                    dst[p++] = local_buf[row_base + i_loc];
+                }
+            }
+        }
+    }
+
+    MPI_Alltoallv(send_buf.data(), send_counts.data(), send_displs.data(),
+                  MPI_DOUBLE,
+                  recv_buf.data(), recv_counts.data(), recv_displs.data(),
+                  MPI_DOUBLE,
+                  d.comm());
+
+    // Zero the padded i-row tail to avoid garbage in FFTW's reduced columns
+    // (the columns i in [nx, 2*(nx/2+1)) are unused but must be defined for
+    // in-place r2c).
+    double* rb = plan.real_buf();
+    const std::size_t slab_real_words =
+        static_cast<std::size_t>(plan.local_nz()) * plane_stride;
+    std::fill(rb, rb + slab_real_words, 0.0);
+
+    // Unpack into FFTW slab buffer at global (i_g, j_g, k_g_local).
+    for (int s = 0; s < size; ++s) {
+        if (recv_counts[s] == 0) continue;
+        const int kk_lo = std::max(cart[s].k_off, mys.k_start);
+        const int kk_hi = std::min(cart[s].k_off + cart[s].nz,
+                                   mys.k_start + mys.k_count);
+        const double* src = recv_buf.data() + recv_displs[s];
+        std::size_t p = 0;
+        for (int k_g = kk_lo; k_g < kk_hi; ++k_g) {
+            const int k_loc = k_g - mys.k_start;
+            for (int j_loc = 0; j_loc < cart[s].ny; ++j_loc) {
+                const int j_g = cart[s].j_off + j_loc;
+                const std::size_t row_base = static_cast<std::size_t>(row_stride) * j_g
+                    + plane_stride * k_loc;
+                for (int i_loc = 0; i_loc < cart[s].nx; ++i_loc) {
+                    const int i_g = cart[s].i_off + i_loc;
+                    rb[row_base + i_g] = src[p++];
+                }
+            }
+        }
+    }
+}
+
+}  // namespace
+
+ShellSpectrum velocity_spectrum_mpi_dist(const State& U, const Grid& global_g,
+                                         FFT3DPlanMPI& plan, const Domain& d) {
+    const int nx_g = plan.nx_global();
+    const int ny_g = plan.ny_global();
+    const int nz_g = plan.nz_global();
+
+    std::vector<CartDesc> cart;
+    std::vector<SlabDesc> slab;
+    gather_cart_descs(d, global_g, cart);
+    gather_slab_descs(plan, d.size(), slab);
+
+    const Real k_fund_x = 2.0 * M_PI / global_g.lx;
+    const Real k_fund_y = 2.0 * M_PI / global_g.ly;
+    const Real k_fund_z = 2.0 * M_PI / global_g.lz;
+    const Real k_fund   = std::min({k_fund_x, k_fund_y, k_fund_z});
+    const int kmax = std::max({nx_g, ny_g, nz_g}) / 2;
+
+    std::vector<Real> bin_sum_local(kmax + 1, 0.0);
+    std::vector<double> local_buf;
+
+    const int nx_c = nx_g / 2 + 1;
+    const int my_kz0  = plan.local_z_start();
+    const int my_nz_l = plan.local_nz();
+
+    for (int comp = 0; comp < 3; ++comp) {
+        pack_velocity_component_local(U, comp, local_buf);
+        redistribute_cart_to_slab(local_buf, cart, slab, plan, d);
+        plan.forward();
+
+        const std::complex<Real>* spec_buf = plan.complex_buf();
+        // Complex stride: (kx + nx_c * (ky + ny_g * kz_local)).
+        for (int k_loc = 0; k_loc < my_nz_l; ++k_loc) {
+            const int kz_g = my_kz0 + k_loc;
+            const int fz = (kz_g <= nz_g / 2) ? kz_g : kz_g - nz_g;
+            for (int ky = 0; ky < ny_g; ++ky) {
+                const int fy = (ky <= ny_g / 2) ? ky : ky - ny_g;
+                for (int kx = 0; kx < nx_c; ++kx) {
+                    const int fx = kx;
+                    const std::size_t idx = static_cast<std::size_t>(kx)
+                        + nx_c * (static_cast<std::size_t>(ky)
+                                  + static_cast<std::size_t>(ny_g) * k_loc);
+                    const std::complex<Real>& uh = spec_buf[idx];
+                    const Real weight = (fx == 0 || fx == nx_g / 2) ? 1.0 : 2.0;
+                    const Real kmag = std::sqrt(static_cast<Real>(
+                        fx * fx + fy * fy + fz * fz));
+                    int b = static_cast<int>(std::round(kmag));
+                    if (b > kmax) continue;
+                    bin_sum_local[b] += 0.5 * weight *
+                        (uh.real() * uh.real() + uh.imag() * uh.imag());
+                }
+            }
+        }
+    }
+
+    std::vector<Real> bin_sum_global(kmax + 1, 0.0);
+    MPI_Allreduce(bin_sum_local.data(), bin_sum_global.data(), kmax + 1,
+                  MPI_DOUBLE, MPI_SUM, d.comm());
+
+    ShellSpectrum sp;
+    sp.k.resize(kmax + 1);
+    sp.E.resize(kmax + 1);
+    const Real total_cells = static_cast<Real>(nx_g) * ny_g * nz_g;
+    const Real norm = 1.0 / (total_cells * total_cells);
+    for (int b = 0; b <= kmax; ++b) {
+        sp.k[b] = b * k_fund;
+        sp.E[b] = bin_sum_global[b] * norm;
+    }
+    return sp;
+}
+
+HelmholtzResult helmholtz_decompose_mpi_dist(const State& U,
+                                             const Grid& global_g,
+                                             FFT3DPlanMPI& plan,
+                                             const Domain& d) {
+    const int nx_g = plan.nx_global();
+    const int ny_g = plan.ny_global();
+    const int nz_g = plan.nz_global();
+
+    std::vector<CartDesc> cart;
+    std::vector<SlabDesc> slab;
+    gather_cart_descs(d, global_g, cart);
+    gather_slab_descs(plan, d.size(), slab);
+
+    const int my_kz0  = plan.local_z_start();
+    const int my_nz_l = plan.local_nz();
+    const int nx_c = nx_g / 2 + 1;
+
+    // Each rank stores its slab's transformed û_x, û_y, û_z.
+    const std::size_t slab_complex_words =
+        static_cast<std::size_t>(my_nz_l) * ny_g * nx_c;
+    std::vector<std::complex<Real>> uh(slab_complex_words);
+    std::vector<std::complex<Real>> vh(slab_complex_words);
+    std::vector<std::complex<Real>> wh(slab_complex_words);
+
+    std::vector<double> local_buf;
+    auto run_one = [&](int comp, std::vector<std::complex<Real>>& dst) {
+        pack_velocity_component_local(U, comp, local_buf);
+        redistribute_cart_to_slab(local_buf, cart, slab, plan, d);
+        plan.forward();
+        const std::complex<Real>* src = plan.complex_buf();
+        std::copy(src, src + slab_complex_words, dst.begin());
+    };
+    run_one(0, uh);
+    run_one(1, vh);
+    run_one(2, wh);
+
+    const Real two_pi_Lx = 2.0 * M_PI / global_g.lx;
+    const Real two_pi_Ly = 2.0 * M_PI / global_g.ly;
+    const Real two_pi_Lz = 2.0 * M_PI / global_g.lz;
+    const Real k_fund    = std::min({two_pi_Lx, two_pi_Ly, two_pi_Lz});
+    const int  kmax      = std::max({nx_g, ny_g, nz_g}) / 2;
+
+    std::vector<Real> sol_sum_loc(kmax + 1, 0.0);
+    std::vector<Real> dil_sum_loc(kmax + 1, 0.0);
+
+    for (int k_loc = 0; k_loc < my_nz_l; ++k_loc) {
+        const int kz_g = my_kz0 + k_loc;
+        const int fz = (kz_g <= nz_g / 2) ? kz_g : kz_g - nz_g;
+        for (int ky = 0; ky < ny_g; ++ky) {
+            const int fy = (ky <= ny_g / 2) ? ky : ky - ny_g;
+            for (int kx = 0; kx < nx_c; ++kx) {
+                const int fx = kx;
+                if (fx == 0 && fy == 0 && fz == 0) continue;
+                const Real kxp = fx * two_pi_Lx;
+                const Real kyp = fy * two_pi_Ly;
+                const Real kzp = fz * two_pi_Lz;
+                const Real kmag2 = kxp * kxp + kyp * kyp + kzp * kzp;
+                if (kmag2 == 0) continue;
+                const Real inv_kmag2 = 1.0 / kmag2;
+
+                const std::size_t idx = static_cast<std::size_t>(kx)
+                    + nx_c * (static_cast<std::size_t>(ky)
+                              + static_cast<std::size_t>(ny_g) * k_loc);
+                const std::complex<Real> ux = uh[idx];
+                const std::complex<Real> uy = vh[idx];
+                const std::complex<Real> uz = wh[idx];
+                const std::complex<Real> k_dot_u =
+                    kxp * ux + kyp * uy + kzp * uz;
+                const std::complex<Real> dil_x = k_dot_u * kxp * inv_kmag2;
+                const std::complex<Real> dil_y = k_dot_u * kyp * inv_kmag2;
+                const std::complex<Real> dil_z = k_dot_u * kzp * inv_kmag2;
+                const std::complex<Real> sol_x = ux - dil_x;
+                const std::complex<Real> sol_y = uy - dil_y;
+                const std::complex<Real> sol_z = uz - dil_z;
+
+                const Real weight = (fx == 0 || fx == nx_g / 2) ? 1.0 : 2.0;
+                const Real e_sol = 0.5 * weight * (
+                    sol_x.real() * sol_x.real() + sol_x.imag() * sol_x.imag()
+                  + sol_y.real() * sol_y.real() + sol_y.imag() * sol_y.imag()
+                  + sol_z.real() * sol_z.real() + sol_z.imag() * sol_z.imag());
+                const Real e_dil = 0.5 * weight * (
+                    dil_x.real() * dil_x.real() + dil_x.imag() * dil_x.imag()
+                  + dil_y.real() * dil_y.real() + dil_y.imag() * dil_y.imag()
+                  + dil_z.real() * dil_z.real() + dil_z.imag() * dil_z.imag());
+
+                const Real kmag_int = std::sqrt(static_cast<Real>(
+                    fx * fx + fy * fy + fz * fz));
+                int b = static_cast<int>(std::round(kmag_int));
+                if (b > kmax) continue;
+                sol_sum_loc[b] += e_sol;
+                dil_sum_loc[b] += e_dil;
+            }
+        }
+    }
+
+    std::vector<Real> sol_sum(kmax + 1, 0.0);
+    std::vector<Real> dil_sum(kmax + 1, 0.0);
+    MPI_Allreduce(sol_sum_loc.data(), sol_sum.data(), kmax + 1,
+                  MPI_DOUBLE, MPI_SUM, d.comm());
+    MPI_Allreduce(dil_sum_loc.data(), dil_sum.data(), kmax + 1,
+                  MPI_DOUBLE, MPI_SUM, d.comm());
+
+    HelmholtzResult r;
+    const Real total_cells = static_cast<Real>(nx_g) * ny_g * nz_g;
+    const Real norm = 1.0 / (total_cells * total_cells);
+    r.E_sol.k.resize(kmax + 1); r.E_sol.E.resize(kmax + 1);
+    r.E_dil.k.resize(kmax + 1); r.E_dil.E.resize(kmax + 1);
+    Real K_sol = 0, K_dil = 0;
+    for (int b = 0; b <= kmax; ++b) {
+        r.E_sol.k[b] = b * k_fund;
+        r.E_dil.k[b] = b * k_fund;
+        r.E_sol.E[b] = sol_sum[b] * norm;
+        r.E_dil.E[b] = dil_sum[b] * norm;
+        K_sol += r.E_sol.E[b];
+        K_dil += r.E_dil.E[b];
+    }
+    r.K_sol = K_sol;
+    r.K_dil = K_dil;
+    return r;
+}
+
 #endif
 
 }  // namespace blast

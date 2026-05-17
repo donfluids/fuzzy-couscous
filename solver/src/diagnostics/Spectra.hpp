@@ -48,11 +48,21 @@ HelmholtzResult helmholtz_decompose(const State& U, const Grid& g,
 // MPI variants (v1): gather the global velocity field to rank 0 and call
 // the serial FFT. Returns populated result on rank 0; empty (k.size()==0)
 // on other ranks. NOT scalable to 768^3 -- gathers O(N^3) data and uses
-// O(N^3) memory on rank 0. The proper FFTW3-MPI pencil decomp is a TODO.
+// O(N^3) memory on rank 0. Use velocity_spectrum_mpi_dist below for that.
 ShellSpectrum velocity_spectrum_mpi(const State& U, const Grid& global_g,
                                     FFT3DPlan& plan, const Domain& d);
 HelmholtzResult helmholtz_decompose_mpi(const State& U, const Grid& global_g,
                                         FFT3DPlan& plan, const Domain& d);
+
+// MPI variants (v2, distributed): use FFTW3-MPI slab decomp. Redistribute
+// the 3D Cartesian-decomposed velocity into FFTW's 1D z-slab layout via
+// MPI_Alltoallv, run the distributed forward transform, accumulate the
+// shell-binned energy locally on each rank's slab, MPI_Allreduce the bins.
+// Memory per rank: O(N^3 / Nranks). Same result on every rank.
+ShellSpectrum velocity_spectrum_mpi_dist(const State& U, const Grid& global_g,
+                                         FFT3DPlanMPI& plan, const Domain& d);
+HelmholtzResult helmholtz_decompose_mpi_dist(const State& U, const Grid& global_g,
+                                             FFT3DPlanMPI& plan, const Domain& d);
 #endif
 
 }  // namespace blast

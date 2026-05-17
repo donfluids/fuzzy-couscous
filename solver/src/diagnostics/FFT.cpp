@@ -3,6 +3,10 @@
 #include <fftw3.h>
 #include <omp.h>
 
+#ifdef BLAST_MPI
+#include <fftw3-mpi.h>
+#endif
+
 #include <mutex>
 
 namespace blast {
@@ -47,5 +51,57 @@ void FFT3DPlan::forward(const Real* in, std::complex<Real>* out) const {
         const_cast<Real*>(in),
         reinterpret_cast<fftw_complex*>(out));
 }
+
+#ifdef BLAST_MPI
+
+namespace {
+std::once_flag g_fftw_mpi_init_flag;
+void do_init_fftw_mpi() {
+    fftw_mpi_init();
+}
+}  // namespace
+
+void init_fftw_mpi() {
+    std::call_once(g_fftw_mpi_init_flag, do_init_fftw_mpi);
+}
+
+FFT3DPlanMPI::FFT3DPlanMPI(int nx, int ny, int nz, MPI_Comm comm)
+    : nx_(nx), ny_(ny), nz_(nz), comm_(comm) {
+    init_fftw_threads();
+    init_fftw_mpi();
+    fftw_plan_with_nthreads(omp_get_max_threads());
+
+    // Slab decomp along the outer (z) dim. FFTW labels dims as (nz, ny, nx);
+    // we query alloc size in complex words; in-place r2c needs 2*alloc reals.
+    ptrdiff_t local_n0, local_0_start;
+    const ptrdiff_t alloc = fftw_mpi_local_size_3d(
+        nz_, ny_, nx_ / 2 + 1, comm_, &local_n0, &local_0_start);
+    alloc_local_   = static_cast<long long>(alloc);
+    local_n0_      = static_cast<long long>(local_n0);
+    local_0_start_ = static_cast<long long>(local_0_start);
+
+    real_buf_ = fftw_alloc_real(2 * static_cast<std::size_t>(alloc));
+
+    plan_ = static_cast<void*>(fftw_mpi_plan_dft_r2c_3d(
+        nz_, ny_, nx_,
+        real_buf_,
+        reinterpret_cast<fftw_complex*>(real_buf_),
+        comm_,
+        FFTW_ESTIMATE));
+}
+
+FFT3DPlanMPI::~FFT3DPlanMPI() {
+    if (plan_) fftw_destroy_plan(static_cast<fftw_plan>(plan_));
+    if (real_buf_) fftw_free(real_buf_);
+}
+
+void FFT3DPlanMPI::forward() {
+    fftw_mpi_execute_dft_r2c(
+        static_cast<fftw_plan>(plan_),
+        real_buf_,
+        reinterpret_cast<fftw_complex*>(real_buf_));
+}
+
+#endif  // BLAST_MPI
 
 }  // namespace blast

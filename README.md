@@ -66,9 +66,11 @@ mpirun -n 16 ./build_mpi/blast_les_mpi examples/paper_case1.toml
 3D Cartesian decomposition via `MPI_Dims_create` chooses `(npx, npy, npz)`
 automatically; `MPI_Cart_create` builds the topology and sets axis
 periodicity from the TOML `[bc]` block. Snapshots are written as a single
-HDF5 file per dump (collective parallel HDF5 hyperslabs); the spectra HDF5
-is gathered to rank 0 and processed there (production-scale FFTW3-MPI
-pencil decomposition is a follow-up).
+HDF5 file per dump (collective parallel HDF5 hyperslabs); spectra are
+available in two variants — a gather-to-rank-0 path that fits up to ~256³
+on a 256 GB node, and a distributed FFTW3-MPI slab-decomposed path
+(`velocity_spectrum_mpi_dist` / `helmholtz_decompose_mpi_dist`) that
+scales to the 768³ production target.
 
 Outputs go to `<out_dir>` defined in the TOML: HDF5 snapshots + an XDMF
 time-series index (ParaView-loadable), a stats CSV, and a spectra HDF5.
@@ -107,7 +109,7 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 - enstrophy `⟨|ω|²⟩` and dilatation-squared `⟨(∇·u)²⟩` independently
 - Helmholtz solenoidal/dilatational kinetic-energy split + per-shell spectra
 
-## Test suite (44 serial + 3 MPI rank counts, all passing)
+## Test suite (44 serial + 4 MPI binaries × 3 rank counts, all passing)
 
 | Suite | What it verifies | Wall (9965 est.) |
 |---|---|---|
@@ -122,6 +124,7 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 | **MPI halo** (1 binary × 3 rank counts) — periodic exchange + face count + cell sum | analytic continuation across 2/4/8-rank partitions to round-off; physical-face count matches `2(npx npy + npx npz + npy npz)`; sum of local cell counts equals global Nx·Ny·Nz with non-divisible factors | < 1 s |
 | **MPI bit-exact** (1 binary × 3 rank counts) — Sod 1D & Sedov 3D | Distributed run gathered to rank 0 matches a fresh serial reference of the same problem to **bit precision** (max |Δ| = 0) at K = 20 / 15 steps. Stresses halo exchange, BC-on-physical-only faces, dt Allreduce, and RHS stencil across partitions. | < 5 s |
 | **MPI restart** (1 binary × 3 rank counts) — collective checkpoint round-trip | Write a smooth-pattern state via parallel HDF5 hyperslabs; read it back into a fresh State on the same Domain. max |Δ| = 0 across all 5 conserved variables; (time, step, nx, ny, nz) header preserved. | < 1 s |
+| **MPI spectra distributed** (1 binary × 3 rank counts) — FFTW3-MPI slab decomp | Multi-mode analytic velocity at 32³ run through both `velocity_spectrum_mpi` (gather-to-rank-0) and `velocity_spectrum_mpi_dist` (distributed FFTW3-MPI); shell-by-shell rel(E) < 1e-10. Same for Helmholtz K_sol/K_dil. Exercises `MPI_Alltoallv` redistribution from the 3D Cart layout to the 1D z-slab layout. | < 2 s |
 
 Total runtime on this sandbox (4 cores, single NUMA): ~95 minutes,
 dominated by MMS3D + SlipWall. On the 9965 with 192 threads the suite
@@ -137,7 +140,8 @@ should run in well under a minute.
 | Time step reduction | `max_dt_hyperbolic(..., MPI_Comm)` and `max_dt_viscous(..., MPI_Comm)` (numerics/RHS.cpp): `MPI_Allreduce(MIN)` on local dt. |
 | Statistics reduction | `velocity_stats(..., N_global, MPI_Comm)` and `dissipation_budget(..., N_global, MPI_Comm)` (diagnostics/Statistics.cpp): `MPI_Allreduce(SUM)` on partial sums, then divide by global cell count. |
 | Snapshot I/O | `HDF5Writer::set_domain(Domain*)` (io/HDF5Writer.cpp): single HDF5 file per dump, collective writes via `H5Pset_fapl_mpio` and `H5Pset_dxpl_mpio(...COLLECTIVE)` with hyperslabs from `Domain::global_offset`. Independent-mode scalar writes from rank 0 only. |
-| Spectra (v1) | `velocity_spectrum_mpi` / `helmholtz_decompose_mpi` (diagnostics/Spectra.cpp): gather to rank 0 + serial FFTW3 on the global grid. **Not scalable to 768³**; FFTW3-MPI pencil decomp is a flagged TODO. |
+| Spectra (v1) | `velocity_spectrum_mpi` / `helmholtz_decompose_mpi` (diagnostics/Spectra.cpp): gather to rank 0 + serial FFTW3 on the global grid. Useful up to ~256³ on a 256 GB node; one-shot diagnostic, not for production-scale dumps. |
+| Spectra (v2, distributed) | `FFT3DPlanMPI` + `velocity_spectrum_mpi_dist` / `helmholtz_decompose_mpi_dist` (diagnostics/FFT.cpp + Spectra.cpp): FFTW3-MPI 1D slab decomposition along z; `MPI_Alltoallv` redistribution from the 3D Cartesian Halo layout to FFTW's slab layout; shell-binning local, `MPI_Allreduce(SUM)` final. Memory per rank: O(N³/N_ranks). Cross-checked against v1 to ~1e-17 rel. |
 | IC global-center | sphere_blast / cj_detonation ICs take optional explicit `(x_c, y_c, z_c)`; the MPI driver passes the global domain center so every rank places the IC at the same physical location. |
 
 End-to-end verification: 2-rank and 4-rank `examples/mpi_smoke.toml` runs

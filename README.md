@@ -143,6 +143,19 @@ should run in well under a minute.
 End-to-end verification: 2-rank and 4-rank `examples/mpi_smoke.toml` runs
 are **bit-identical to serial** for KE, tke, M_t, dt at every step.
 
+**Strong-scaling on this 4-core sandbox** (32³ chamber blast, 27 steps,
+hyperbolic-CFL=0.3, threads balanced so total = 4):
+
+| Ranks × OMP_NUM_THREADS | Wall-time | Speedup | Parallel efficiency |
+|---|---|---|---|
+| 1 × 4 | 8.19 s | 1.00× | — |
+| 2 × 2 | 4.73 s | 1.73× | 87 % |
+| 4 × 1 | 2.78 s | 2.95× | 74 % |
+
+Above the 50 % strong-scaling bar set in the build plan. On the 9965 the
+absolute timings collapse to milliseconds at these resolutions; the
+interesting scaling regime is multi-node MPI for 768³ ensembles.
+
 ## TGV at Re=1600 on 64³ — Kolmogorov recovery
 
 `examples/tgv_re1600_64_hyper2.toml` runs the classical Taylor–Green vortex

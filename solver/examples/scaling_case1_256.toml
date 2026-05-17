@@ -1,0 +1,55 @@
+# Strong-scaling driver for paper Case 1 at 256^3.
+# Same physics/IC as paper_case1.toml but capped to 30 steps with all
+# I/O disabled, so the wall time reflects compute + halo + Allreduce.
+run_name = "scaling_case1_256"
+
+[grid]
+nx = 256
+ny = 256
+nz = 256
+lx = 0.50
+ly = 0.50
+lz = 0.50
+x0 = -0.25
+y0 = -0.25
+z0 = -0.25
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.0465
+rho_B          = 12.25
+T_B            = 28815.0
+rho_0          = 1.225
+T_0            = 288.15
+Y42_amp        = 0.2
+tanh_thickness = 0.0029
+
+[physics]
+gamma     = 1.4
+R         = 287.05
+mu        = 1.8e-5
+prandtl   = 0.71
+bulk_visc = 0.0
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 1.0e30
+dt_max         = 1.0
+max_steps      = 30
+
+[output]
+out_dir          = "out_scaling_case1_256"
+snapshot_every   = 1000000
+stats_every      = 1
+checkpoint_every = 0
+write_spectra    = false
+write_helmholtz  = false

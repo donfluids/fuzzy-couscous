@@ -1,0 +1,10 @@
+# Per-run output directories (each holds a per-config TOML + initial HDF5
+# snapshot; multiple GB per run). Regenerate by re-running the sweep.
+runs_*/
+
+# Per-config solver stdout logs. Useful for debugging a single run but not
+# meaningful to track in git.
+logs_*/
+
+# Driver-side stdout tees from the sweep scripts.
+*run*.log

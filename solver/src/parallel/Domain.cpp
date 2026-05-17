@@ -2,6 +2,8 @@
 
 #include "parallel/Domain.hpp"
 
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 namespace blast {
@@ -12,6 +14,19 @@ bool axis_periodic(const BCSet& bc, int dim) {
     if (dim == 0) return bc.xlo == BCType::Periodic && bc.xhi == BCType::Periodic;
     if (dim == 1) return bc.ylo == BCType::Periodic && bc.yhi == BCType::Periodic;
     return bc.zlo == BCType::Periodic && bc.zhi == BCType::Periodic;
+}
+
+// BLAST_DIMS=PX,PY,PZ overrides MPI_Dims_create. Returns true if set and
+// the product matches world_size; false otherwise (caller falls back).
+bool parse_dims_env(int world_size, int dims_out[3]) {
+    const char* s = std::getenv("BLAST_DIMS");
+    if (s == nullptr || *s == 0) return false;
+    int px = 0, py = 0, pz = 0;
+    if (std::sscanf(s, "%d,%d,%d", &px, &py, &pz) != 3) return false;
+    if (px <= 0 || py <= 0 || pz <= 0) return false;
+    if (px * py * pz != world_size) return false;
+    dims_out[0] = px; dims_out[1] = py; dims_out[2] = pz;
+    return true;
 }
 
 }  // namespace
@@ -26,7 +41,8 @@ Domain::Domain(MPI_Comm world, const Grid& global_grid, const BCSet& bc) {
     periodic_[0] = periods[0]; periodic_[1] = periods[1]; periodic_[2] = periods[2];
 
     int dims[3] = {0, 0, 0};
-    MPI_Dims_create(world_size, 3, dims);
+    if (!parse_dims_env(world_size, dims))
+        MPI_Dims_create(world_size, 3, dims);
     dims_[0] = dims[0]; dims_[1] = dims[1]; dims_[2] = dims[2];
 
     MPI_Cart_create(world, 3, dims, periods, /*reorder=*/1, &comm_);

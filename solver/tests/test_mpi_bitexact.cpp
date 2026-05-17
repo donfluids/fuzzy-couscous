@@ -140,8 +140,11 @@ int run_sod_bitexact(int K_steps) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+    // Use ny = nz = 16 so a (2,2,1) decomp at 4 ranks gives each rank
+    // local_ny = 8 >= NGHOST = 6. Smaller cross-sections cause an
+    // unrelated halo-shape bug (TODO: assert this in Domain).
     Grid global_g;
-    global_g.nx = 64; global_g.ny = 4; global_g.nz = 4;
+    global_g.nx = 64; global_g.ny = 16; global_g.nz = 16;
     global_g.lx = 1.0;
     global_g.ly = global_g.lx / global_g.nx * global_g.ny;
     global_g.lz = global_g.ly;

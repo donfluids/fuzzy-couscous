@@ -51,6 +51,30 @@ Domain::Domain(MPI_Comm world, const Grid& global_grid, const BCSet& bc) {
                 "Domain: more ranks per axis than global cells per axis");
         }
     }
+
+    // Every rank's local extent must be >= NGHOST on each axis, otherwise
+    // the halo subarray exchange overlaps with itself and corrupts data
+    // silently. Check on all ranks; abort if any rank is below the limit.
+    int my_local[3];
+    long long off_dummy;
+    compute_local_extent_(0, global_grid.nx, my_local[0], off_dummy);
+    compute_local_extent_(1, global_grid.ny, my_local[1], off_dummy);
+    compute_local_extent_(2, global_grid.nz, my_local[2], off_dummy);
+    int min_local[3];
+    MPI_Allreduce(my_local, min_local, 3, MPI_INT, MPI_MIN, comm_);
+    if (min_local[0] < NGHOST || min_local[1] < NGHOST || min_local[2] < NGHOST) {
+        if (rank_ == 0) {
+            throw std::runtime_error(
+                "Domain: at least one rank has a local extent < NGHOST="
+                + std::to_string(NGHOST)
+                + " (min per-axis local = (" + std::to_string(min_local[0])
+                + ", " + std::to_string(min_local[1])
+                + ", " + std::to_string(min_local[2])
+                + ")). Use a coarser rank count or a larger global grid.");
+        }
+        MPI_Barrier(comm_);
+        MPI_Abort(comm_, 2);
+    }
 }
 
 Domain::~Domain() {

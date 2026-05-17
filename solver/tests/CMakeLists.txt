@@ -15,6 +15,7 @@ add_executable(unit_tests
     test_restart.cpp
     test_mms.cpp
     test_hyperdissipation.cpp
+    test_slip_wall.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

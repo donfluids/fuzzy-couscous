@@ -170,12 +170,13 @@ int main(int argc, char** argv) {
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
 
-    // FFT plan for spectra: rank-0-only serial FFT on the global grid (v1).
-    // Allocated on every rank but only rank 0 actually uses it; the other
-    // ranks' plans are cheap to construct and harmless.
-    std::unique_ptr<FFT3DPlan> fft_plan;
+    // FFT plan for spectra: distributed FFTW3-MPI slab decomp (v2), so the
+    // diagnostic is memory-scalable to 768^3 instead of pulling the entire
+    // velocity field to rank 0.
+    std::unique_ptr<FFT3DPlanMPI> fft_plan;
     if (c.output.write_spectra || c.output.write_helmholtz)
-        fft_plan = std::make_unique<FFT3DPlan>(global_g.nx, global_g.ny, global_g.nz);
+        fft_plan = std::make_unique<FFT3DPlanMPI>(
+            global_g.nx, global_g.ny, global_g.nz, domain.comm());
 
     auto log_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
@@ -183,9 +184,9 @@ int main(int argc, char** argv) {
         HelmholtzResult h{};
         ShellSpectrum sp{};
         if (c.output.write_helmholtz || c.output.write_spectra)
-            h = helmholtz_decompose_mpi(U, global_g, *fft_plan, domain);
+            h = helmholtz_decompose_mpi_dist(U, global_g, *fft_plan, domain);
         if (c.output.write_spectra) {
-            sp = velocity_spectrum_mpi(U, global_g, *fft_plan, domain);
+            sp = velocity_spectrum_mpi_dist(U, global_g, *fft_plan, domain);
             if (world_rank == 0) writer.append_spectra(h, sp, t, step);
         }
         if (world_rank == 0) {

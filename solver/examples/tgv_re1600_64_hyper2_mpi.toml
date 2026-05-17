@@ -1,0 +1,46 @@
+run_name = "tgv_re1600_64_hyper2_mpi"
+
+[grid]
+nx = 64
+ny = 64
+nz = 64
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 6.283185307179586
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+type = "taylor_green"
+
+[physics]
+gamma = 1.4
+R     = 1.0
+mu          = 6.25e-4
+hyper_coeff = 2.5e-5
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 12.0
+dt_max         = 1.0
+max_steps      = 100000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "out_tgv64_hyper2_mpi"
+snapshot_every   = 50000
+stats_every      = 10
+write_spectra    = true
+write_helmholtz  = true

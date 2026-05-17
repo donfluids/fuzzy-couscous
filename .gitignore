@@ -1,4 +1,5 @@
 build/
+build_*/
 out/
 out_*/
 *.h5

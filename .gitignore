@@ -9,3 +9,7 @@ out_*/
 .DS_Store
 __pycache__/
 *.pyc
+
+# Permit committed figures under paper/figures/
+!paper/figures/*.png
+!paper/figures/*.pdf

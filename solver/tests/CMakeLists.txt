@@ -16,6 +16,7 @@ add_executable(unit_tests
     test_mms.cpp
     test_hyperdissipation.cpp
     test_slip_wall.cpp
+    test_shu_osher_1d.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

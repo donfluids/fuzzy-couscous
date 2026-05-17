@@ -1,0 +1,57 @@
+# Statistically stationary forced HIT, 32^3 demo. Cheaper than 64^3 so the
+# steady-state plateau is reachable in ~10 minutes. Energy balance is
+# scheme-independent; the only thing 64^3 buys is a longer inertial range.
+run_name = "hit_forced_32"
+
+[grid]
+nx = 32
+ny = 32
+nz = 32
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 6.283185307179586
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+type = "taylor_green"
+
+[physics]
+gamma = 1.4
+R     = 1.0
+mu          = 5.0e-3
+hyper_coeff = 1.0e-4
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 15.0
+dt_max         = 1.0
+max_steps      = 100000
+
+[forcing]
+enabled    = true
+k_lo       = 1
+k_hi       = 3
+eps_target = 0.1
+T_corr     = 1.0
+seed       = 12345
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "out_hit_forced_32"
+snapshot_every   = 50000
+stats_every      = 20
+write_spectra    = true
+write_helmholtz  = true

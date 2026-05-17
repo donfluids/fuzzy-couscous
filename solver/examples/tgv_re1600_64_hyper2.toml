@@ -44,5 +44,6 @@ enabled = false
 out_dir          = "out_tgv64_hyper2"
 snapshot_every   = 50000
 stats_every      = 10
+checkpoint_every = 500
 write_spectra    = true
 write_helmholtz  = true

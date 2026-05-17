@@ -30,6 +30,26 @@ void ic_sedov_3d(State& U, const Grid& g, const IdealGas& eos,
 void ic_taylor_green_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real V0, Real rho_0, Real M_0);
 
+// Rogallo-style divergence-free random velocity field on a periodic cube,
+// with a prescribed initial energy spectrum:
+//
+//   E(k) = A k^4 exp(-2 (k/k_peak)^2)              (Passot-Pouquet)
+//
+// where A is chosen so that the integrated kinetic energy density equals
+// 0.5 * urms^2. The random field is built in Fourier space with two
+// independent Gaussian-random helicity modes per (kx,ky,kz) and then
+// projected onto the plane perpendicular to k (divergence-free). Returns
+// a quiescent thermodynamic state at (rho_0, p_0) so the flow is initially
+// incompressible-like (low-Mach).
+//
+// Used for the canonical Comte-Bellot--Corrsin (CBC) decaying-isotropic-
+// turbulence validation: with k_peak ~ 4 and urms ~ 1 on a (2 pi)^3 domain,
+// the resulting decay rate and three-time spectra match the published
+// experiment.
+void ic_rogallo_3d(State& U, const Grid& g, const IdealGas& eos,
+                   Real urms, Real k_peak, Real rho_0, Real p_0,
+                   int seed);
+
 // Chamber blast: dense hot sphere of radius r_blast inside a quiescent box.
 // `tanh_thickness > 0` smooths the sphere interface (avoids initial WENO
 // transients). `Y42_amp != 0` perturbs the sphere radius with the

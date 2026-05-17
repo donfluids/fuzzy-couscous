@@ -51,6 +51,7 @@ set(BLAST_CORE_SOURCES
     src/numerics/Gradients.cpp
     src/ic/Canonical.cpp
     src/physics/RiemannExact.cpp
+    src/physics/Forcing.cpp
     src/diagnostics/FFT.cpp
     src/diagnostics/Spectra.cpp
     src/diagnostics/Statistics.cpp

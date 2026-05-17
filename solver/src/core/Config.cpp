@@ -110,6 +110,14 @@ Config load_config(const std::string& path) {
     c.filter.every   = pick<int64_t>(fl["every"], c.filter.every);
     c.filter.sigma   = pick<double>(fl["sigma"], c.filter.sigma);
 
+    auto fc = tbl["forcing"];
+    c.forcing.enabled    = pick<bool>(fc["enabled"],       c.forcing.enabled);
+    c.forcing.k_lo       = pick<int64_t>(fc["k_lo"],       c.forcing.k_lo);
+    c.forcing.k_hi       = pick<int64_t>(fc["k_hi"],       c.forcing.k_hi);
+    c.forcing.eps_target = pick<double>(fc["eps_target"],  c.forcing.eps_target);
+    c.forcing.T_corr     = pick<double>(fc["T_corr"],      c.forcing.T_corr);
+    c.forcing.seed       = pick<int64_t>(fc["seed"],       c.forcing.seed);
+
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
     c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);

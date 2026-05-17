@@ -15,11 +15,13 @@
 #include "parallel/Domain.hpp"
 #include "parallel/Halo.hpp"
 #include "physics/EOS.hpp"
+#include "physics/Forcing.hpp"
 
 #include <mpi.h>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -154,6 +156,24 @@ int main(int argc, char** argv) {
 
     RK3 driver(local_g.nx, local_g.ny, local_g.nz, U.ng());
 
+    // Spectral OU forcing (shared across ranks, same seed -> bit-exact MPI).
+    // Constructed against the GLOBAL grid so all ranks share the same modes.
+    std::unique_ptr<SpectralForcing> forcing;
+    if (c.forcing.enabled) {
+        SpectralForcing::Params fp;
+        fp.k_lo = c.forcing.k_lo;
+        fp.k_hi = c.forcing.k_hi;
+        fp.eps_target = c.forcing.eps_target;
+        fp.T_corr = c.forcing.T_corr;
+        fp.seed   = c.forcing.seed;
+        forcing = std::make_unique<SpectralForcing>(global_g, fp);
+        if (world_rank == 0)
+            BLAST_INFO("spectral forcing: {} modes in k in [{}, {}], "
+                       "eps_target={:.3e}, T_corr={:.3e}",
+                       forcing->num_modes(), fp.k_lo, fp.k_hi,
+                       fp.eps_target, fp.T_corr);
+    }
+
     if (world_rank == 0)
         std::filesystem::create_directories(c.output.out_dir);
     MPI_Barrier(MPI_COMM_WORLD);
@@ -226,6 +246,12 @@ int main(int argc, char** argv) {
         }
 
         driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo);
+        if (forcing) {
+            forcing->evolve_ou(dt);
+            forcing->apply(U, local_g, dt, domain.comm());
+            halo.exchange(U);
+            apply_bcs(U, bc, domain);
+        }
         t += dt;
         ++step;
 

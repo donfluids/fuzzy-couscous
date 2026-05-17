@@ -18,6 +18,7 @@ add_executable(unit_tests
     test_slip_wall.cpp
     test_shu_osher_1d.cpp
     test_rogallo.cpp
+    test_forcing.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core
@@ -46,6 +47,9 @@ if(BLAST_MPI)
 
     add_executable(test_mpi_spectra_dist test_mpi_spectra_dist.cpp)
     target_link_libraries(test_mpi_spectra_dist PRIVATE blast_core_mpi)
+
+    add_executable(test_mpi_forcing test_mpi_forcing.cpp)
+    target_link_libraries(test_mpi_forcing PRIVATE blast_core_mpi)
 
     # Run under mpirun at 1, 2, 4 ranks. OpenMPI in containers (Docker/etc.)
     # needs --oversubscribe + the root override.
@@ -81,6 +85,14 @@ if(BLAST_MPI)
                     -n ${N}
                     $<TARGET_FILE:test_mpi_spectra_dist>)
         set_tests_properties(mpi_spectra_dist_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_forcing_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_forcing>)
+        set_tests_properties(mpi_forcing_${N} PROPERTIES
             ENVIRONMENT "${MPI_ENV}")
     endforeach()
 endif()

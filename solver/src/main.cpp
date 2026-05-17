@@ -13,12 +13,14 @@
 #include "numerics/RHS.hpp"
 #include "numerics/RK3.hpp"
 #include "physics/EOS.hpp"
+#include "physics/Forcing.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 
 using namespace blast;
@@ -138,6 +140,21 @@ int main(int argc, char** argv) {
 
     RK3 driver(c.grid.nx, c.grid.ny, c.grid.nz, U.ng());
 
+    std::unique_ptr<SpectralForcing> forcing;
+    if (c.forcing.enabled) {
+        SpectralForcing::Params fp;
+        fp.k_lo = c.forcing.k_lo;
+        fp.k_hi = c.forcing.k_hi;
+        fp.eps_target = c.forcing.eps_target;
+        fp.T_corr = c.forcing.T_corr;
+        fp.seed   = c.forcing.seed;
+        forcing = std::make_unique<SpectralForcing>(c.grid, fp);
+        BLAST_INFO("spectral forcing: {} modes in k in [{}, {}], "
+                   "eps_target={:.3e}, T_corr={:.3e}",
+                   forcing->num_modes(), fp.k_lo, fp.k_hi,
+                   fp.eps_target, fp.T_corr);
+    }
+
     std::filesystem::create_directories(c.output.out_dir);
     HDF5Writer writer(c.output.out_dir, c.run_name);
     std::ofstream stats_file(c.output.out_dir + "/" + c.run_name + "_stats.csv");
@@ -186,6 +203,11 @@ int main(int argc, char** argv) {
         }
 
         driver.step(U, c.grid, bc, eos, vp, dt);
+        if (forcing) {
+            forcing->evolve_ou(dt);
+            forcing->apply(U, c.grid, dt);
+            apply_bcs(U, bc);
+        }
         t += dt;
         ++step;
 

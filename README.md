@@ -83,14 +83,17 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 | AdvectSmooth, Sod1D, Sedov3D, ViscousMMS | RK3 third-order convergence on smooth periodic flow; exact Riemann; analytic shock radius; composed-derivative viscous Laplacian 6th-order | ~2 s |
 | Spectrum, Helmholtz, VelocityStats, Dissipation | Parseval; single-mode binning; pure-solenoidal / pure-irrotational projection; M_t / ε_sol / ε_dil identities | < 1 s |
 | TGV (initial enstrophy + decay), ChamberSmoke, CJDetonation, Restart | viscous decay, slip-wall closed-chamber blast smoke, exact CJ relations, checkpoint bit-exactness | ~5 s |
-| **MMS3D** (3) — entropy wave, Yee–Sandham–Djomehri vortex, viscous-NS with analytic source | end-to-end Navier–Stokes accuracy on 32³ → 48³ → 64³ | ~30 s |
+| **MMS3D** (3) — entropy wave, Yee–Sandham–Djomehri vortex, viscous-NS with analytic source | end-to-end Navier–Stokes accuracy on 32³ → 48³ → 64³ | ~56 s |
 | **Hyperdissipation** (3) — operator value, eigenvalue decay, off-when-disabled | discrete `∇⁴` matches analytic `k⁴` damping; SSP-RK3 integration preserves the exp(−λ t) eigenvalue decay; zero coeff bit-exact identity | ~10 s |
 | **SlipWall** (2) — mass+energy conservation, acoustic round-trip | inviscid slip walls conserve mass and total energy to < 1e-10 relative; small-amplitude acoustic pulse returns to its starting position with > 50% amplitude after one round-trip, no negative-density ringing | ~5 s |
 | **ShuOsher1D** (2) — post-shock oscillations, refinement | Mach-3 shock interacting with sinusoidal density retains the post-shock fine-scale oscillations; 200-cell vs 800-cell self-converged reference L1 < 0.25 | ~3 s |
 
 Total runtime on this sandbox (4 cores, single NUMA): ~95 minutes,
-dominated by MMS3D + SlipWall. On the 9965 with 192 threads the suite
-should run in well under a minute.
+dominated by MMS3D + SlipWall. On the 9965 the suite runs in ~107 s
+(MMS3D ~56 s; ShuOsher1D refinement ~27 s; everything else ~24 s).
+CTest sets `OMP_NUM_THREADS=32 OMP_PROC_BIND=close OMP_PLACES=cores`
+because at 32³ grids barrier and cross-NUMA overhead make 192 unbound
+threads ~6× slower than 32 pinned.
 
 ## TGV at Re=1600 on 64³ — Kolmogorov recovery
 

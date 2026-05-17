@@ -3,6 +3,10 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 
+#ifdef BLAST_MPI
+#include "parallel/Domain.hpp"
+#endif
+
 #include <string>
 
 namespace blast {
@@ -24,5 +28,18 @@ struct CheckpointHeader {
 
 CheckpointHeader read_checkpoint(const std::string& path, State& U,
                                  const Grid& g);
+
+#ifdef BLAST_MPI
+// MPI variants: collective parallel-HDF5 hyperslab writes and reads. The
+// `g` argument is the GLOBAL grid; each rank reads / writes its own
+// subblock. Files written at any rank count can be read at any other
+// rank count provided the global grid shape matches.
+void write_checkpoint(const std::string& path, const State& U,
+                      const Grid& global_g, Real t, int step,
+                      const Domain& d);
+
+CheckpointHeader read_checkpoint(const std::string& path, State& U,
+                                 const Grid& global_g, const Domain& d);
+#endif
 
 }  // namespace blast

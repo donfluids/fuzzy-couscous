@@ -121,6 +121,7 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 | **ShuOsher1D** (2) — post-shock oscillations, refinement | Mach-3 shock interacting with sinusoidal density retains the post-shock fine-scale oscillations; 200-cell vs 800-cell self-converged reference L1 < 0.25 | ~3 s |
 | **MPI halo** (1 binary × 3 rank counts) — periodic exchange + face count + cell sum | analytic continuation across 2/4/8-rank partitions to round-off; physical-face count matches `2(npx npy + npx npz + npy npz)`; sum of local cell counts equals global Nx·Ny·Nz with non-divisible factors | < 1 s |
 | **MPI bit-exact** (1 binary × 3 rank counts) — Sod 1D & Sedov 3D | Distributed run gathered to rank 0 matches a fresh serial reference of the same problem to **bit precision** (max |Δ| = 0) at K = 20 / 15 steps. Stresses halo exchange, BC-on-physical-only faces, dt Allreduce, and RHS stencil across partitions. | < 5 s |
+| **MPI restart** (1 binary × 3 rank counts) — collective checkpoint round-trip | Write a smooth-pattern state via parallel HDF5 hyperslabs; read it back into a fresh State on the same Domain. max |Δ| = 0 across all 5 conserved variables; (time, step, nx, ny, nz) header preserved. | < 1 s |
 
 Total runtime on this sandbox (4 cores, single NUMA): ~95 minutes,
 dominated by MMS3D + SlipWall. On the 9965 with 192 threads the suite

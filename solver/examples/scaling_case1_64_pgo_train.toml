@@ -1,0 +1,62 @@
+# Case 1 blast IC at 64^3, 30 steps, no I/O. Used as half of the PGO
+# training set (scaling/run_pgo_train.sh). Mirrors scaling_case1_256.toml's
+# physics + IC, just on a coarser grid so the instrumented binary runs in
+# minutes instead of hours.
+#
+# The hot code paths PGO actually cares about (WENO5 shock detection, RHS
+# dispatch, RK3 stages, viscous + hyper kernels) are grid-independent in
+# their branch structure -- the loop iteration counts shrink but the
+# branch frequencies stay the same. tanh_thickness is widened from 0.0029
+# to 0.0117 (~1.5 dx at 64^3) to keep the IC numerically stable.
+run_name = "scaling_case1_64_pgo_train"
+
+[grid]
+nx = 64
+ny = 64
+nz = 64
+lx = 0.50
+ly = 0.50
+lz = 0.50
+x0 = -0.25
+y0 = -0.25
+z0 = -0.25
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.0465
+rho_B          = 12.25
+T_B            = 28815.0
+rho_0          = 1.225
+T_0            = 288.15
+Y42_amp        = 0.2
+tanh_thickness = 0.0117
+
+[physics]
+gamma     = 1.4
+R         = 287.05
+mu        = 1.8e-5
+prandtl   = 0.71
+bulk_visc = 0.0
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 1.0e30
+dt_max         = 1.0
+max_steps      = 30
+
+[output]
+out_dir          = "out_scaling_case1_64_pgo_train"
+snapshot_every   = 1000000
+stats_every      = 1
+checkpoint_every = 0
+write_spectra    = false
+write_helmholtz  = false

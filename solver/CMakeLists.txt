@@ -13,6 +13,9 @@ option(NATIVE_OPT     "Enable -march=native and aggressive vectorization" ON)
 option(AGGRESSIVE_OPT "Stencil-loop tuning (unroll, align, fno-plt)" ON)
 option(PREFER_AVX512  "Pin GCC to 512-bit SIMD (good on Intel AVX-512, AVOID on AMD Zen)" OFF)
 option(LTO            "Link-time optimization (slow builds, modest gain here)" OFF)
+option(PGO_GENERATE   "Build instrumented binary that emits PGO counter profiles (-fprofile-generate)" OFF)
+option(PGO_USE        "Build optimized binary that consumes a merged PGO profile (-fprofile-use)" OFF)
+set(PGO_PROFILE_DIR "" CACHE STRING "Absolute path for -fprofile-generate=/-fprofile-use= directory")
 option(BUILD_TESTS    "Build unit tests" ON)
 option(BLAST_MPI      "Build MPI variant alongside serial (libfftw3_mpi + parallel HDF5)" OFF)
 
@@ -40,6 +43,41 @@ if(LTO)
     # next-level production knob.
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
+
+# Profile-Guided Optimization (two-phase):
+#   1. -DPGO_GENERATE=ON -DPGO_PROFILE_DIR=<abs>  → instrumented build
+#   2. run a representative workload to populate <abs>/*.gcda
+#   3. -DPGO_USE=ON -DPGO_PROFILE_DIR=<abs>       → consume profile, optimize
+# scaling/run_pgo_train.sh orchestrates the whole sequence on the 9965.
+if(PGO_GENERATE AND PGO_USE)
+    message(FATAL_ERROR "PGO_GENERATE and PGO_USE are mutually exclusive; pick one phase at a time")
+endif()
+if((PGO_GENERATE OR PGO_USE) AND NOT PGO_PROFILE_DIR)
+    message(FATAL_ERROR "PGO_GENERATE/PGO_USE require -DPGO_PROFILE_DIR=<absolute path>")
+endif()
+if(PGO_GENERATE)
+    # Non-atomic counter updates. -fprofile-update=atomic would be the
+    # "safe" option for OpenMP-parallel inner loops, but on 192 threads it
+    # collapses atomic-add throughput on the shared counter cache lines and
+    # the training run gets ~250x slower (measured: 1.34 s/step baseline
+    # vs ~340 s/step instrumented at 256^3). The race-induced counter
+    # noise that non-atomic updates introduce is small relative to the
+    # branch-frequency ratios PGO actually consumes -- the use-pass
+    # tolerates it via -fprofile-correction below.
+    add_compile_options(-fprofile-generate=${PGO_PROFILE_DIR})
+    add_link_options   (-fprofile-generate=${PGO_PROFILE_DIR})
+    message(STATUS "PGO: instrumented build, profile dir = ${PGO_PROFILE_DIR}")
+endif()
+if(PGO_USE)
+    # -fprofile-correction tolerates the OMP-race counter mismatches noted
+    # above; -Wno-missing-profile silences warnings for TUs that the
+    # training set did not exercise (e.g. forcing kernels when training
+    # was TGV + Case 1).
+    add_compile_options(-fprofile-use=${PGO_PROFILE_DIR} -fprofile-correction -Wno-missing-profile)
+    add_link_options   (-fprofile-use=${PGO_PROFILE_DIR} -fprofile-correction)
+    message(STATUS "PGO: optimized build, profile dir = ${PGO_PROFILE_DIR}")
+endif()
+
 add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
 
 find_package(OpenMP REQUIRED)

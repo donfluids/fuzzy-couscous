@@ -3,6 +3,7 @@
 #include "core/Field3D.hpp"
 #include "numerics/Ducros.hpp"
 #include "numerics/Gradients.hpp"
+#include "numerics/RhsScratch.hpp"
 #include "numerics/Stencils.hpp"
 #include "numerics/WENO5.hpp"
 #include "physics/EOS.hpp"
@@ -136,9 +137,11 @@ inline Real face_flux(const Real* Fptr, const Real* Uptr, Real alpha_face,
 // After this, theta_dilated(c) = max(theta_orig over [c-2, c+2] along d).
 // Combined with checking both cells of a face, the central6 stencil
 // (cells c-2..c+3 around the left cell) is fully covered.
-void dilate_sensor_along(Field3D& theta, int d) {
+//
+// `scratch` is the caller's pre-allocated buffer of the same shape as theta;
+// it is overwritten internally and theta is restored from it on exit.
+void dilate_sensor_along(Field3D& theta, Field3D& scratch, int d) {
     const int nx = theta.nx(), ny = theta.ny(), nz = theta.nz(), ng = theta.ng();
-    Field3D scratch(nx, ny, nz, ng);
 
     // Read theta on interior + ng-1 ghost layer, write into scratch.
     const int lo = -(ng - 1);
@@ -223,26 +226,25 @@ void add_face_flux_divergence(const State& U, const State& Flux,
 }  // namespace
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          State& Rhs) {
+                          RhsScratch& scratch, State& Rhs) {
     for (int v = 0; v < NCONS; ++v) Rhs.fill(v, 0.0);
 
-    Field3D theta(U.nx(), U.ny(), U.nz(), U.ng());
+    Field3D& theta     = scratch.theta;
+    Field3D& alpha     = scratch.alpha;
+    Field3D& theta_dil = scratch.theta_dil;
+    Field3D& dil_tmp   = scratch.dilate_tmp;
+    State&   Flux      = scratch.Flux_inv;
+
     compute_sensor(U, g, eos, theta);
 
-    State Flux(U.nx(), U.ny(), U.nz(), U.ng());
-    Field3D alpha(U.nx(), U.ny(), U.nz(), U.ng());
-
-    // Per direction: dilate the sensor along d so the face dispatch covers the
-    // full central6 stencil footprint, then compute fluxes and accumulate.
-    Field3D theta_dil(U.nx(), U.ny(), U.nz(), U.ng());
-
     auto run_direction = [&](int d, Real inv_h) {
-        // Reset dilated sensor to original, then dilate along d.
+        // Reset dilated sensor to original, then dilate along d in-place
+        // using the pre-allocated scratch buffer.
         const int ng = theta.ng();
         const Index N = theta.ldx() * (theta.ny() + 2 * ng) * (theta.nz() + 2 * ng);
 #pragma omp parallel for schedule(static)
         for (Index i = 0; i < N; ++i) theta_dil.raw()[i] = theta.raw()[i];
-        dilate_sensor_along(theta_dil, d);
+        dilate_sensor_along(theta_dil, dil_tmp, d);
 
         fill_flux_and_alpha(U, d, eos, Flux, alpha);
         add_face_flux_divergence(U, Flux, alpha, theta_dil, d, inv_h, Rhs);
@@ -251,6 +253,16 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
     run_direction(0, 1.0 / g.dx());
     if (U.ny() > 1) run_direction(1, 1.0 / g.dy());
     if (U.nz() > 1) run_direction(2, 1.0 / g.dz());
+}
+
+void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
+                          State& Rhs) {
+    // Standalone path used by tests / ad-hoc callers. Allocates scratch
+    // once on the stack; production runs go through the RhsScratch
+    // overload via RK3.
+    RhsScratch s;
+    s.allocate(U.nx(), U.ny(), U.nz(), U.ng());
+    compute_rhs_inviscid(U, g, eos, s, Rhs);
 }
 
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
@@ -406,7 +418,7 @@ void add_viscous_flux_divergence(const State& Flux, int d, Real inv_dh,
 // rings; pass 2 takes the Laplacian of that and ADDS the contribution.
 // Requires NGHOST >= 6 (we have it).
 static void add_rhs_hyperdissipation(const State& U, const Grid& g,
-                                     Real nu_h, State& Rhs) {
+                                     Real nu_h, Field3D& lap, State& Rhs) {
     if (nu_h <= 0.0) return;
     const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
     const Real inv_dx2 = 1.0 / (g.dx() * g.dx());
@@ -414,7 +426,6 @@ static void add_rhs_hyperdissipation(const State& U, const Grid& g,
     const Real inv_dz2 = (nz > 1) ? 1.0 / (g.dz() * g.dz()) : 0.0;
     const Index sx = 1;
 
-    Field3D lap(nx, ny, nz, ng);
     const int lo = -ng + stencil::RADIUS;
     const int hi_x = nx + ng - stencil::RADIUS;
     const int hi_y = ny + ng - stencil::RADIUS;
@@ -456,27 +467,36 @@ static void add_rhs_hyperdissipation(const State& U, const Grid& g,
 }
 
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
-                     const ViscousParams& vp, State& Rhs) {
+                     const ViscousParams& vp, RhsScratch& scratch, State& Rhs) {
     if (vp.mu > 0.0) {
-        CellGradients G;
-        G.allocate(U.nx(), U.ny(), U.nz(), U.ng());
-        compute_cell_gradients(U, g, eos, G);
+        compute_cell_gradients(U, g, eos,
+                               scratch.prim_u, scratch.prim_v,
+                               scratch.prim_w, scratch.prim_T,
+                               scratch.G);
 
-        State Flux(U.nx(), U.ny(), U.nz(), U.ng());
+        State& Flux = scratch.Flux_visc;
 
-        fill_viscous_flux_dir(U, G, vp, eos, 0, Flux);
+        fill_viscous_flux_dir(U, scratch.G, vp, eos, 0, Flux);
         add_viscous_flux_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
 
         if (U.ny() > 1) {
-            fill_viscous_flux_dir(U, G, vp, eos, 1, Flux);
+            fill_viscous_flux_dir(U, scratch.G, vp, eos, 1, Flux);
             add_viscous_flux_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
         }
         if (U.nz() > 1) {
-            fill_viscous_flux_dir(U, G, vp, eos, 2, Flux);
+            fill_viscous_flux_dir(U, scratch.G, vp, eos, 2, Flux);
             add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
         }
     }
-    add_rhs_hyperdissipation(U, g, vp.hyper_coeff, Rhs);
+    add_rhs_hyperdissipation(U, g, vp.hyper_coeff, scratch.lap, Rhs);
+}
+
+void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
+                     const ViscousParams& vp, State& Rhs) {
+    // Standalone wrapper for tests / ad-hoc callers.
+    RhsScratch s;
+    s.allocate(U.nx(), U.ny(), U.nz(), U.ng());
+    add_rhs_viscous(U, g, eos, vp, s, Rhs);
 }
 
 }  // namespace blast

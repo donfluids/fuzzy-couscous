@@ -23,7 +23,15 @@ struct CellGradients {
     void allocate(int nx, int ny, int nz, int ng);
 };
 
+// Two overloads: the bare one allocates the primitive scratch on the stack
+// (4 Field3D objects, ~70 MB at 256^3). The scratch-aware overload takes
+// pre-allocated buffers (typically owned by RhsScratch via RK3) so the
+// allocation only happens once per simulation lifetime.
 void compute_cell_gradients(const State& U, const Grid& g, const IdealGas& eos,
+                            CellGradients& G);
+void compute_cell_gradients(const State& U, const Grid& g, const IdealGas& eos,
+                            Field3D& prim_u, Field3D& prim_v,
+                            Field3D& prim_w, Field3D& prim_T,
                             CellGradients& G);
 
 }  // namespace blast

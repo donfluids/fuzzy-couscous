@@ -13,6 +13,7 @@ void CellGradients::allocate(int nx, int ny, int nz, int ng) {
 }
 
 void compute_cell_gradients(const State& U, const Grid& g, const IdealGas& eos,
+                            Field3D& u, Field3D& v, Field3D& w, Field3D& T,
                             CellGradients& G) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
 
@@ -33,12 +34,6 @@ void compute_cell_gradients(const State& U, const Grid& g, const IdealGas& eos,
     const auto& my  = U[RHOV];
     const auto& mz  = U[RHOW];
     const auto& E   = U[RHOE];
-
-    // Build primitive scratch fields (u, v, w, T) on the valid region.
-    Field3D u(nx, ny, nz, ng);
-    Field3D v(nx, ny, nz, ng);
-    Field3D w(nx, ny, nz, ng);
-    Field3D T(nx, ny, nz, ng);
 
 #pragma omp parallel for collapse(2) schedule(static)
     for (int k = -ng; k < nz + ng; ++k)
@@ -79,6 +74,15 @@ void compute_cell_gradients(const State& U, const Grid& g, const IdealGas& eos,
     take_derivs_along(0, inv_dx);
     take_derivs_along(1, inv_dy);
     take_derivs_along(2, inv_dz);
+}
+
+void compute_cell_gradients(const State& U, const Grid& g, const IdealGas& eos,
+                            CellGradients& G) {
+    // Standalone wrapper for tests / ad-hoc callers. Allocates the primitive
+    // scratch once on the stack and forwards to the scratch-aware overload.
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+    Field3D u(nx, ny, nz, ng), v(nx, ny, nz, ng), w(nx, ny, nz, ng), T(nx, ny, nz, ng);
+    compute_cell_gradients(U, g, eos, u, v, w, T, G);
 }
 
 }  // namespace blast

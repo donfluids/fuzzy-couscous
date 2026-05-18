@@ -3,6 +3,7 @@
 #include "core/Config.hpp"
 #include "core/Grid.hpp"
 #include "core/State.hpp"
+#include "numerics/RhsScratch.hpp"
 #include "physics/EOS.hpp"
 #include "physics/ViscousFlux.hpp"
 
@@ -49,8 +50,9 @@ public:
 #endif
 
 private:
-    State U1_;
-    State k_;
+    State       U1_;
+    State       k_;
+    RhsScratch  scratch_;
 };
 
 }  // namespace blast

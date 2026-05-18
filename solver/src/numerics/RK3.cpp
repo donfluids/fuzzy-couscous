@@ -6,7 +6,9 @@
 namespace blast {
 
 RK3::RK3(int nx, int ny, int nz, int ng)
-    : U1_(nx, ny, nz, ng), k_(nx, ny, nz, ng) {}
+    : U1_(nx, ny, nz, ng), k_(nx, ny, nz, ng) {
+    scratch_.allocate(nx, ny, nz, ng);
+}
 
 void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                Real dt) {
@@ -18,8 +20,9 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
 void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                const ViscousParams& vp, Real dt) {
     auto eval_rhs = [&](const State& Uin) {
-        compute_rhs_inviscid(Uin, g, eos, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0)
+            add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 
     apply_bcs(U, bc);
@@ -39,8 +42,9 @@ void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,
                            const IdealGas& eos, const ViscousParams& vp,
                            Real dt, Real t_current, const SourceCallback& src) {
     auto eval_rhs = [&](const State& Uin, Real t_stage) {
-        compute_rhs_inviscid(Uin, g, eos, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0)
+            add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
         if (src) src(k_, g, t_stage);
     };
 
@@ -64,8 +68,9 @@ void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos
     auto eval_rhs = [&](State& Uin) {
         halo.exchange(Uin);
         apply_bcs(Uin, bc, d);
-        compute_rhs_inviscid(Uin, g, eos, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0) add_rhs_viscous(Uin, g, eos, vp, k_);
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0)
+            add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 
     eval_rhs(U);

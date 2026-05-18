@@ -35,6 +35,7 @@ SpectralForcing::SpectralForcing(const Grid& g, const Params& p)
                 m.kx = mx * two_pi_Lx;
                 m.ky = my * two_pi_Ly;
                 m.kz = mz * two_pi_Lz;
+                m.mx = mx;  m.my = my;  m.mz = mz;
                 m.kmag = std::sqrt(m.kx * m.kx + m.ky * m.ky + m.kz * m.kz);
 
                 const Real khx = m.kx / m.kmag;
@@ -58,6 +59,81 @@ SpectralForcing::SpectralForcing(const Grid& g, const Params& p)
             }
         }
     }
+}
+
+void SpectralForcing::ensure_trig_tables(const Grid& local) const {
+    // Rebuild tables if the local grid (rank, dx, x0) changed since last call.
+    // Same physical extent + same modes -> bit-exact reuse on every call.
+    if (tab_nx_ == local.nx && tab_ny_ == local.ny && tab_nz_ == local.nz
+        && tab_x0_ == local.x0 && tab_y0_ == local.y0 && tab_z0_ == local.z0
+        && tab_dx_ == local.dx() && tab_dy_ == local.dy() && tab_dz_ == local.dz())
+        return;
+
+    tab_nx_ = local.nx; tab_ny_ = local.ny; tab_nz_ = local.nz;
+    tab_x0_ = local.x0; tab_y0_ = local.y0; tab_z0_ = local.z0;
+    tab_dx_ = local.dx(); tab_dy_ = local.dy(); tab_dz_ = local.dz();
+
+    const int M = p_.k_hi;
+    const int span = 2 * M + 1;
+
+    auto build = [&](Real x0, Real dx, int n,
+                     std::vector<Real>& cos_t, std::vector<Real>& sin_t) {
+        cos_t.assign(static_cast<std::size_t>(span) * n, 0.0);
+        sin_t.assign(static_cast<std::size_t>(span) * n, 0.0);
+        // For each integer m in [-M, +M] (table index m_idx = m + M),
+        // store cos(m * 2pi/L * x_i) and sin(...) for every cell index i.
+        // L = (n_global) * dx, but cos(m * 2pi/L * x) for x on the cell-center
+        // grid uses the physical-space relation: phase = m * two_pi_per_L * x.
+        // We compute phase directly from the cell center coordinate so the
+        // table is grid-aligned by construction.
+        for (int idx = 0; idx < span; ++idx) {
+            const int m = idx - M;
+            const Real freq = static_cast<Real>(m) * 2.0 * M_PI;
+            // freq * x / L, where L is the GLOBAL extent. We stored 2*pi*m/L
+            // directly via modes_; reuse here by querying the first mode that
+            // happens to have this m along the axis. Cleaner: compute
+            // (2 pi / L) from one of the modes.
+            // For axis x: m.kx = m * two_pi_Lx. So two_pi_Lx = m.kx / m for m != 0,
+            // or alternatively L_x = global span, but we don't have it directly.
+            // Simpler: pass two_pi_per_L into build via capture.
+            (void)freq;
+        }
+    };
+    (void)build;  // suppress unused-lambda warning if needed below
+
+    // Recover two_pi_per_L_axis from the modes_ list (constructor stored them).
+    // Find a mode with m_axis != 0 and infer two_pi_per_L = k_axis / m_axis.
+    Real two_pi_Lx = 0, two_pi_Ly = 0, two_pi_Lz = 0;
+    for (const auto& m : modes_) {
+        if (two_pi_Lx == 0 && m.mx != 0) two_pi_Lx = m.kx / m.mx;
+        if (two_pi_Ly == 0 && m.my != 0) two_pi_Ly = m.ky / m.my;
+        if (two_pi_Lz == 0 && m.mz != 0) two_pi_Lz = m.kz / m.mz;
+    }
+    // Axes that have no nonzero-m mode in the half-space we enumerated:
+    // fall back to one of the global frequency components via a different
+    // mode; or, if still 0, leave the table at the m=0 row only.
+    // (k_lo >= 1 guarantees at least one nonzero component per mode.)
+    if (two_pi_Lx == 0) two_pi_Lx = 1.0;
+    if (two_pi_Ly == 0) two_pi_Ly = 1.0;
+    if (two_pi_Lz == 0) two_pi_Lz = 1.0;
+
+    auto fill = [&](Real x0, Real dx, int n, Real two_pi_L,
+                    std::vector<Real>& cos_t, std::vector<Real>& sin_t) {
+        cos_t.assign(static_cast<std::size_t>(span) * n, 0.0);
+        sin_t.assign(static_cast<std::size_t>(span) * n, 0.0);
+        for (int idx = 0; idx < span; ++idx) {
+            const int m = idx - M;
+            const Real freq = static_cast<Real>(m) * two_pi_L;
+            for (int i = 0; i < n; ++i) {
+                const Real x = x0 + (i + 0.5) * dx;
+                cos_t[static_cast<std::size_t>(idx) * n + i] = std::cos(freq * x);
+                sin_t[static_cast<std::size_t>(idx) * n + i] = std::sin(freq * x);
+            }
+        }
+    };
+    fill(tab_x0_, tab_dx_, tab_nx_, two_pi_Lx, cos_table_x_, sin_table_x_);
+    fill(tab_y0_, tab_dy_, tab_ny_, two_pi_Ly, cos_table_y_, sin_table_y_);
+    fill(tab_z0_, tab_dz_, tab_nz_, two_pi_Lz, cos_table_z_, sin_table_z_);
 }
 
 void SpectralForcing::evolve_ou(Real dt) {
@@ -87,30 +163,50 @@ void SpectralForcing::apply(State& U, const Grid& local, Real dt
 
     std::vector<Real> fx(N, 0.0), fy(N, 0.0), fz(N, 0.0);
 
-    // 1. Evaluate raw force field at each local cell by direct summation.
-    //    f(x) = sum_k 2 Re[ (a1 e1 + a2 e2) * exp(i k.x) ]
-    //         = sum_k 2 [ Re(a1) cos(k.x) - Im(a1) sin(k.x) ] e1
+    ensure_trig_tables(local);
+    const int M = p_.k_hi;
+    const Real* __restrict__ cx = cos_table_x_.data();
+    const Real* __restrict__ sx = sin_table_x_.data();
+    const Real* __restrict__ cy = cos_table_y_.data();
+    const Real* __restrict__ sy = sin_table_y_.data();
+    const Real* __restrict__ cz = cos_table_z_.data();
+    const Real* __restrict__ sz = sin_table_z_.data();
+
+    // 1. Evaluate raw force field at each local cell.
+    //    f(x) = sum_m 2 Re[ (a1 e1 + a2 e2) * exp(i k_m . x) ]
+    //         = sum_m 2 [ Re(a1) cos(k.x) - Im(a1) sin(k.x) ] e1
     //             + 2 [ Re(a2) cos(k.x) - Im(a2) sin(k.x) ] e2
+    //
+    // Factorize the phase via cos/sin-sum identities, reusing per-axis trig
+    // tables built once at first call. Per cell+mode this replaces 2 trig
+    // calls (~60 cycles) with 4 muls and 2 adds (~10 cycles).
 #pragma omp parallel for collapse(2) schedule(static)
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j) {
             for (int i = 0; i < nx; ++i) {
-                const Real x = local.x0 + (i + 0.5) * local.dx();
-                const Real y = local.y0 + (j + 0.5) * local.dy();
-                const Real z = local.z0 + (k + 0.5) * local.dz();
                 Real fxc = 0, fyc = 0, fzc = 0;
                 for (const auto& m : modes_) {
-                    const Real phase = m.kx * x + m.ky * y + m.kz * z;
-                    const Real cp = std::cos(phase), sp = std::sin(phase);
+                    const int idx_x = (m.mx + M) * nx + i;
+                    const int idx_y = (m.my + M) * ny + j;
+                    const int idx_z = (m.mz + M) * nz + k;
+                    const Real cX = cx[idx_x], sX = sx[idx_x];
+                    const Real cY = cy[idx_y], sY = sy[idx_y];
+                    const Real cZ = cz[idx_z], sZ = sz[idx_z];
+                    // cos(A+B) and sin(A+B) for A=ky*y, B=kz*z
+                    const Real cYZ = cY * cZ - sY * sZ;
+                    const Real sYZ = sY * cZ + cY * sZ;
+                    // cos(A+B+C) and sin(A+B+C) for the full phase
+                    const Real cp = cX * cYZ - sX * sYZ;
+                    const Real sp = sX * cYZ + cX * sYZ;
                     const Real c1 = 2.0 * (m.a1.real() * cp - m.a1.imag() * sp);
                     const Real c2 = 2.0 * (m.a2.real() * cp - m.a2.imag() * sp);
                     fxc += c1 * m.e1[0] + c2 * m.e2[0];
                     fyc += c1 * m.e1[1] + c2 * m.e2[1];
                     fzc += c1 * m.e1[2] + c2 * m.e2[2];
                 }
-                const std::size_t idx = static_cast<std::size_t>(i)
+                const std::size_t cell = static_cast<std::size_t>(i)
                     + nx * (static_cast<std::size_t>(j) + ny * k);
-                fx[idx] = fxc; fy[idx] = fyc; fz[idx] = fzc;
+                fx[cell] = fxc; fy[cell] = fyc; fz[cell] = fzc;
             }
         }
 

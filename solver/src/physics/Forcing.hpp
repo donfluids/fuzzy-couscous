@@ -80,6 +80,7 @@ public:
 private:
     struct Mode {
         Real kx, ky, kz;
+        int  mx, my, mz;          // integer wavenumber indices (for trig table lookup)
         Real kmag;
         Real e1[3], e2[3];        // unit basis vectors perpendicular to k
         std::complex<Real> a1;    // OU amplitude along e1
@@ -90,6 +91,24 @@ private:
     std::vector<Mode> modes_;
     std::mt19937 rng_;
     Real last_eps_ = 0.0;
+
+    // Per-axis trig tables. For each integer wavenumber m in [-k_hi, +k_hi]
+    // (offset by k_hi so m=0 is at index k_hi), store cos(m * 2pi/L * x_i)
+    // and sin(...) for every local cell index i. Built once on the first
+    // apply() call; reused on every subsequent call.
+    //
+    // Layout: cos_table_x_[(m + k_hi) * nx_local + i].
+    //
+    // Replaces ~3 billion cos/sin evaluations per step at 256^3 / 89 modes
+    // with table lookups + 2 trig-sum identities per cell.
+    mutable std::vector<Real> cos_table_x_, sin_table_x_;
+    mutable std::vector<Real> cos_table_y_, sin_table_y_;
+    mutable std::vector<Real> cos_table_z_, sin_table_z_;
+    mutable int tab_nx_ = 0, tab_ny_ = 0, tab_nz_ = 0;
+    mutable Real tab_x0_ = 0, tab_y0_ = 0, tab_z0_ = 0;
+    mutable Real tab_dx_ = 0, tab_dy_ = 0, tab_dz_ = 0;
+
+    void ensure_trig_tables(const Grid& local) const;
 };
 
 }  // namespace blast

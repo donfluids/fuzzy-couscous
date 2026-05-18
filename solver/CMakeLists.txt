@@ -9,12 +9,36 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-option(NATIVE_OPT "Enable -march=native and aggressive vectorization" ON)
-option(BUILD_TESTS "Build unit tests" ON)
-option(BLAST_MPI   "Build MPI variant alongside serial (libfftw3_mpi + parallel HDF5)" OFF)
+option(NATIVE_OPT     "Enable -march=native and aggressive vectorization" ON)
+option(AGGRESSIVE_OPT "Stencil-loop tuning (unroll, align, fno-plt)" ON)
+option(PREFER_AVX512  "Pin GCC to 512-bit SIMD (good on Intel AVX-512, AVOID on AMD Zen)" OFF)
+option(LTO            "Link-time optimization (slow builds, modest gain here)" OFF)
+option(BUILD_TESTS    "Build unit tests" ON)
+option(BLAST_MPI      "Build MPI variant alongside serial (libfftw3_mpi + parallel HDF5)" OFF)
 
 if(NATIVE_OPT)
     add_compile_options(-march=native -mtune=native -ffast-math -fno-finite-math-only)
+endif()
+if(AGGRESSIVE_OPT)
+    # Memory-bandwidth-bound 6th-order central + WENO5 stencil sweeps benefit
+    # from full inner-loop unrolling; -falign-loops=64 keeps the tight inner
+    # loops on cache-line boundaries.
+    add_compile_options(-funroll-loops -falign-loops=64 -fno-plt)
+endif()
+if(PREFER_AVX512)
+    # Forces GCC to use 512-bit zmm registers in vectorized loops. Wins on
+    # Intel CPUs with native 512-bit datapath (Sapphire/Granite Rapids,
+    # Skylake-X). LOSES on AMD Zen4/Zen5c, where AVX-512 is double-pumped
+    # through a 256-bit datapath; for those, leave PREFER_AVX512=OFF and let
+    # -march=native pick 256-bit width.
+    add_compile_options(-mprefer-vector-width=512)
+endif()
+if(LTO)
+    # On this codebase LTO adds little because the hot loops (Stencils.hpp,
+    # WENO5.hpp, EulerFlux.hpp) are header-defined and already inlined per
+    # translation unit. Kept here for completeness; PGO is the better
+    # next-level production knob.
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
 add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
 

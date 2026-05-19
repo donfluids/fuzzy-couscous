@@ -102,6 +102,53 @@ void FFT3DPlanMPI::forward() {
         reinterpret_cast<fftw_complex*>(real_buf_));
 }
 
+// Verify our duplicated kind enums match FFTW's at compile time.
+static_assert(static_cast<int>(r2r::DCT_II) == FFTW_REDFT10,
+              "r2r::DCT_II must equal FFTW_REDFT10");
+static_assert(static_cast<int>(r2r::DST_II) == FFTW_RODFT10,
+              "r2r::DST_II must equal FFTW_RODFT10");
+
+R2R3DPlanMPI::R2R3DPlanMPI(int nx, int ny, int nz, MPI_Comm comm,
+                           r2r::Kind kind_z, r2r::Kind kind_y, r2r::Kind kind_x)
+    : nx_(nx), ny_(ny), nz_(nz), comm_(comm) {
+    init_fftw_threads();
+    init_fftw_mpi();
+    fftw_plan_with_nthreads(omp_get_max_threads());
+
+    // R2R has no Hermitian fold: full nz x ny x nx reals in, same out.
+    // Slab decomp along outer z dim, identical to the r2c case.
+    ptrdiff_t local_n0, local_0_start;
+    const ptrdiff_t alloc = fftw_mpi_local_size_3d(
+        nz_, ny_, nx_, comm_, &local_n0, &local_0_start);
+    alloc_local_   = static_cast<long long>(alloc);
+    local_n0_      = static_cast<long long>(local_n0);
+    local_0_start_ = static_cast<long long>(local_0_start);
+
+    real_buf_ = fftw_alloc_real(static_cast<std::size_t>(alloc));
+
+    const fftw_r2r_kind kinds[3] = {
+        static_cast<fftw_r2r_kind>(kind_z),
+        static_cast<fftw_r2r_kind>(kind_y),
+        static_cast<fftw_r2r_kind>(kind_x),
+    };
+    plan_ = static_cast<void*>(fftw_mpi_plan_r2r_3d(
+        nz_, ny_, nx_,
+        real_buf_, real_buf_,
+        comm_,
+        kinds[0], kinds[1], kinds[2],
+        FFTW_ESTIMATE));
+}
+
+R2R3DPlanMPI::~R2R3DPlanMPI() {
+    if (plan_) fftw_destroy_plan(static_cast<fftw_plan>(plan_));
+    if (real_buf_) fftw_free(real_buf_);
+}
+
+void R2R3DPlanMPI::forward() {
+    fftw_mpi_execute_r2r(
+        static_cast<fftw_plan>(plan_), real_buf_, real_buf_);
+}
+
 #endif  // BLAST_MPI
 
 }  // namespace blast

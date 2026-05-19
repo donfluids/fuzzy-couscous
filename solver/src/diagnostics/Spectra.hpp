@@ -63,6 +63,51 @@ ShellSpectrum velocity_spectrum_mpi_dist(const State& U, const Grid& global_g,
                                          FFT3DPlanMPI& plan, const Domain& d);
 HelmholtzResult helmholtz_decompose_mpi_dist(const State& U, const Grid& global_g,
                                              FFT3DPlanMPI& plan, const Domain& d);
+
+// Cosine/sine-based velocity spectrum for slip-wall domains.
+// Slip-wall BCs (ghost mirror with sign-flip on the normal component, see
+// bc/BC.cpp:40-93) make the natural spectral basis DCT-II on density / energy
+// and on each velocity component's tangential axes, plus DST-II on each
+// velocity component's normal axis. Wavenumbers k_n = n*pi/L_axis. The caller
+// supplies three pre-built distributed R2R plans, one per velocity component:
+//   plan_u : DST x DCT x DCT (kind_x = DST, others = DCT)
+//   plan_v : DCT x DST x DCT
+//   plan_w : DCT x DCT x DST
+// (parameterized in axis order outer-to-inner = z, y, x to match
+// R2R3DPlanMPI's constructor signature.)
+//
+// Returns the shell-binned E(k) summed over the 3 velocity components, with
+// bin centers k = b * pi/L_min. Result is identical on every rank.
+ShellSpectrum velocity_spectrum_dct_mpi(const State& U, const Grid& global_g,
+                                        R2R3DPlanMPI& plan_u,
+                                        R2R3DPlanMPI& plan_v,
+                                        R2R3DPlanMPI& plan_w,
+                                        const Domain& d);
+
+// Helmholtz decomposition in the slip-wall (DCT/DST mixed) basis. Same plan
+// triplet as velocity_spectrum_dct_mpi. The decomposition is performed
+// entirely in spectral space:
+//
+//   1. Forward transform u, v, w into their respective DST/DCT mixes.
+//   2. Divergence sits in pure DCT_x × DCT_y × DCT_z:
+//        div̂[m_x,m_y,m_z] = (m_x pi/L_x) û[m_x-1,m_y,m_z]
+//                         + (m_y pi/L_y) v̂[m_x,m_y-1,m_z]
+//                         + (m_z pi/L_z) ŵ[m_x,m_y,m_z-1]
+//   3. Solve Poisson:  φ̂ = -div̂ / |k_DCT|^2  (skip k=0).
+//   4. Recover u_dil = ∇φ component-by-component in their DST/DCT bases:
+//        (û_dil_x)[i,j,k] = -((i+1) pi/L_x) φ̂[i+1,j,k]   for i < N-1
+//        (similar for v, w on their own DST axes)
+//   5. u_sol = u - u_dil per component; bin shells of |u_sol|^2 / 2 and
+//      |u_dil|^2 / 2 using each component's own basis wavenumbers.
+//
+// Inter-rank communication: two single-z-slice exchanges per call (one for
+// ŵ along the z-derivative in divergence, one for φ̂ along ∂_z in the
+// gradient recovery). Result is identical on every rank.
+HelmholtzResult helmholtz_decompose_dct_mpi(const State& U, const Grid& global_g,
+                                            R2R3DPlanMPI& plan_u,
+                                            R2R3DPlanMPI& plan_v,
+                                            R2R3DPlanMPI& plan_w,
+                                            const Domain& d);
 #endif
 
 }  // namespace blast

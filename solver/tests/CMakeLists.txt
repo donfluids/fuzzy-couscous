@@ -56,6 +56,9 @@ if(BLAST_MPI)
     add_executable(test_mpi_spectra_dist test_mpi_spectra_dist.cpp)
     target_link_libraries(test_mpi_spectra_dist PRIVATE blast_core_mpi)
 
+    add_executable(test_mpi_spectra_dct test_mpi_spectra_dct.cpp)
+    target_link_libraries(test_mpi_spectra_dct PRIVATE blast_core_mpi)
+
     add_executable(test_mpi_forcing test_mpi_forcing.cpp)
     target_link_libraries(test_mpi_forcing PRIVATE blast_core_mpi)
 
@@ -93,6 +96,14 @@ if(BLAST_MPI)
                     -n ${N}
                     $<TARGET_FILE:test_mpi_spectra_dist>)
         set_tests_properties(mpi_spectra_dist_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_spectra_dct_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_spectra_dct>)
+        set_tests_properties(mpi_spectra_dct_${N} PROPERTIES
             ENVIRONMENT "${MPI_ENV}")
 
         add_test(NAME mpi_forcing_${N}

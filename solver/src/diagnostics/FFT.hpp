@@ -10,6 +10,17 @@
 #include <cstddef>
 #include <vector>
 
+// Forward-declare the FFTW r2r kind enum so this header doesn't pull in
+// the whole fftw3.h. The integer values come from <fftw3.h>; we duplicate
+// the few we need (REDFT10 = DCT-II, RODFT10 = DST-II) and verify in
+// the implementation via static_assert.
+namespace blast::r2r {
+enum Kind : int {
+    DCT_II = 5,   // FFTW_REDFT10
+    DST_II = 9,   // FFTW_RODFT10
+};
+}  // namespace blast::r2r
+
 namespace blast {
 
 // RAII wrapper around an FFTW3 real-to-complex 3D plan with OpenMP threading.
@@ -91,6 +102,44 @@ private:
 
 // Idempotent one-shot fftw_mpi_init.
 void init_fftw_mpi();
+
+// Distributed FFTW3-MPI real-to-real plan, parameterized by three r2r kinds
+// (one per axis, outer-to-inner). Used for cosine / sine transforms on
+// slip-wall domains where mirror-reflection BCs make {DCT,DST} the natural
+// spectral basis. Same slab decomposition along outer z-dim as
+// FFT3DPlanMPI; output is REAL, full N_x in inner dim (no Hermitian fold).
+class R2R3DPlanMPI {
+public:
+    R2R3DPlanMPI(int nx, int ny, int nz, MPI_Comm comm,
+                 r2r::Kind kind_z, r2r::Kind kind_y, r2r::Kind kind_x);
+    ~R2R3DPlanMPI();
+    R2R3DPlanMPI(const R2R3DPlanMPI&) = delete;
+    R2R3DPlanMPI& operator=(const R2R3DPlanMPI&) = delete;
+
+    int nx_global() const { return nx_; }
+    int ny_global() const { return ny_; }
+    int nz_global() const { return nz_; }
+
+    int local_nz()      const { return static_cast<int>(local_n0_); }
+    int local_z_start() const { return static_cast<int>(local_0_start_); }
+
+    // R2R is full N in every dim (no padded inner stride). Layout:
+    //   real_buf[i + nx * (j + ny * k_local)]
+    int real_row_stride() const { return nx_; }
+
+    double* real_buf() { return real_buf_; }
+
+    void forward();
+
+    MPI_Comm comm() const { return comm_; }
+
+private:
+    int nx_, ny_, nz_;
+    MPI_Comm comm_;
+    long long alloc_local_ = 0, local_n0_ = 0, local_0_start_ = 0;
+    double* real_buf_ = nullptr;
+    void*   plan_     = nullptr;
+};
 #endif
 
 }  // namespace blast

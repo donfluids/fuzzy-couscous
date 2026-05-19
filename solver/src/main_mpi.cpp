@@ -190,24 +190,65 @@ int main(int argc, char** argv) {
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
 
-    // FFT plan for spectra: distributed FFTW3-MPI slab decomp (v2), so the
-    // diagnostic is memory-scalable to 768^3 instead of pulling the entire
-    // velocity field to rank 0.
+    // Spectra plans. Pick basis from BC configuration:
+    //   - all periodic  -> Fourier r2c (distributed FFTW3-MPI)
+    //   - all slip-wall -> 3D real-to-real (DCT/DST mix per velocity component)
+    // Mixed BCs are currently not supported for spectra (the basis would have
+    // to vary per axis); spectra are skipped with a warning in that case.
+    const bool periodic_spec = c.bc.all_periodic();
+    const bool slip_spec     = c.bc.all_slip_wall();
+    const bool any_spec_out  = c.output.write_spectra || c.output.write_helmholtz;
+    if (any_spec_out && !periodic_spec && !slip_spec && world_rank == 0) {
+        BLAST_WARN("write_spectra/write_helmholtz set but BCs are neither "
+                   "all-periodic nor all-slip-wall; spectra disabled");
+    }
     std::unique_ptr<FFT3DPlanMPI> fft_plan;
-    if (c.output.write_spectra || c.output.write_helmholtz)
+    if (any_spec_out && periodic_spec)
         fft_plan = std::make_unique<FFT3DPlanMPI>(
             global_g.nx, global_g.ny, global_g.nz, domain.comm());
+
+    std::unique_ptr<R2R3DPlanMPI> dct_plan_u, dct_plan_v, dct_plan_w;
+    if (any_spec_out && slip_spec) {
+        // R2R3DPlanMPI takes kinds outer-to-inner = (z, y, x).
+        // u is DST on x (its normal), DCT on y, z;  v is DST on y; w is DST on z.
+        dct_plan_u = std::make_unique<R2R3DPlanMPI>(
+            global_g.nx, global_g.ny, global_g.nz, domain.comm(),
+            r2r::DCT_II, r2r::DCT_II, r2r::DST_II);
+        dct_plan_v = std::make_unique<R2R3DPlanMPI>(
+            global_g.nx, global_g.ny, global_g.nz, domain.comm(),
+            r2r::DCT_II, r2r::DST_II, r2r::DCT_II);
+        dct_plan_w = std::make_unique<R2R3DPlanMPI>(
+            global_g.nx, global_g.ny, global_g.nz, domain.comm(),
+            r2r::DST_II, r2r::DCT_II, r2r::DCT_II);
+    }
 
     auto log_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
         auto b = dissipation_budget(U, local_g, eos, vp, N_global, domain.comm());
         HelmholtzResult h{};
         ShellSpectrum sp{};
-        if (c.output.write_helmholtz || c.output.write_spectra)
-            h = helmholtz_decompose_mpi_dist(U, global_g, *fft_plan, domain);
+        if (c.output.write_helmholtz || c.output.write_spectra) {
+            if (periodic_spec)
+                h = helmholtz_decompose_mpi_dist(U, global_g, *fft_plan, domain);
+            else if (slip_spec)
+                h = helmholtz_decompose_dct_mpi(U, global_g,
+                                                *dct_plan_u, *dct_plan_v, *dct_plan_w,
+                                                domain);
+        }
         if (c.output.write_spectra) {
-            sp = velocity_spectrum_mpi_dist(U, global_g, *fft_plan, domain);
-            if (world_rank == 0) writer.append_spectra(h, sp, t, step);
+            if (periodic_spec) {
+                sp = velocity_spectrum_mpi_dist(U, global_g, *fft_plan, domain);
+            } else if (slip_spec) {
+                // helmholtz_decompose_dct_mpi already produced E_sol+E_dil
+                // bins of total kinetic energy; reuse for the total spectrum
+                // to avoid re-running the 3 forward transforms.
+                sp.k = h.E_sol.k;
+                sp.E.assign(h.E_sol.E.size(), 0.0);
+                for (std::size_t b = 0; b < sp.E.size(); ++b)
+                    sp.E[b] = h.E_sol.E[b] + h.E_dil.E[b];
+            }
+            if (world_rank == 0 && (periodic_spec || slip_spec))
+                writer.append_spectra(h, sp, t, step);
         }
         if (world_rank == 0) {
             stats_file << step << ',' << t << ',' << dt << ','

@@ -55,6 +55,17 @@ struct BCSet {
     BCType xlo = BCType::Periodic, xhi = BCType::Periodic;
     BCType ylo = BCType::Periodic, yhi = BCType::Periodic;
     BCType zlo = BCType::Periodic, zhi = BCType::Periodic;
+
+    bool all_periodic() const {
+        return xlo == BCType::Periodic && xhi == BCType::Periodic
+            && ylo == BCType::Periodic && yhi == BCType::Periodic
+            && zlo == BCType::Periodic && zhi == BCType::Periodic;
+    }
+    bool all_slip_wall() const {
+        return xlo == BCType::SlipWall && xhi == BCType::SlipWall
+            && ylo == BCType::SlipWall && yhi == BCType::SlipWall
+            && zlo == BCType::SlipWall && zhi == BCType::SlipWall;
+    }
 };
 
 struct ICParams {

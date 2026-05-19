@@ -1,0 +1,54 @@
+# TGV Re=1600 on 256^3 with Δx^2-scaled hyperdissipation:
+#   ν_h(256) = ν_h(64) × (64/256)^2 = 2.5e-5 / 16 = 1.5625e-6
+# (matches the empirical rule from the 32->64 step in the README).
+# Production layout is 8 MPI ranks × 24 OpenMP threads on a single
+# AMD EPYC 9965 (192 cores) -- the optimum identified in
+# scaling/results_c192.md.
+run_name = "tgv_re1600_256_hyper2"
+
+[grid]
+nx = 256
+ny = 256
+nz = 256
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 6.283185307179586
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+type = "taylor_green"
+
+[physics]
+gamma       = 1.4
+R           = 1.0
+mu          = 6.25e-4
+hyper_coeff = 1.5625e-6
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 12.0
+dt_max         = 1.0
+max_steps      = 100000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "out_tgv256_hyper2"
+snapshot_every   = 1000000          # only the initial step-0 snapshot
+stats_every      = 50               # CSV + spectra dump cadence
+checkpoint_every = 2000             # ~17 ckpts to t=12
+write_spectra    = true
+write_helmholtz  = true
+restart_path     = "out_tgv256_hyper2/tgv_re1600_256_hyper2.ckpt.h5"

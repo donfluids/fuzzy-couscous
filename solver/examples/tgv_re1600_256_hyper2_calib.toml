@@ -1,0 +1,50 @@
+# Short 30-step variant of tgv_re1600_256_hyper2 with all I/O disabled,
+# used to measure s/step at a chosen rank × thread layout before kicking
+# off the full t=12 run.
+run_name = "tgv_re1600_256_hyper2_calib"
+
+[grid]
+nx = 256
+ny = 256
+nz = 256
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 6.283185307179586
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+type = "taylor_green"
+
+[physics]
+gamma       = 1.4
+R           = 1.0
+mu          = 6.25e-4
+hyper_coeff = 1.5625e-6
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 1.0e30
+dt_max         = 1.0
+max_steps      = 30
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "out_tgv256_hyper2_calib"
+snapshot_every   = 1000000
+stats_every      = 5
+checkpoint_every = 0
+write_spectra    = false
+write_helmholtz  = false

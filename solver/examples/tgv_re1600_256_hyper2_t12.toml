@@ -1,0 +1,52 @@
+# Full 256^3 TGV Re=1600 decay to t=12, fresh start from t=0. Identical
+# to tgv_re1600_256_hyper2.toml minus the restart_path (so it cannot
+# auto-resume; intentional, for a clean grid-convergence dataset).
+# Production layout for this dataset: 8 MPI ranks x 16 OpenMP threads on
+# 128 cores of the EPYC 9965.
+run_name = "tgv_re1600_256_hyper2"
+
+[grid]
+nx = 256
+ny = 256
+nz = 256
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 6.283185307179586
+x0 = 0.0
+y0 = 0.0
+z0 = 0.0
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+type = "taylor_green"
+
+[physics]
+gamma       = 1.4
+R           = 1.0
+mu          = 6.25e-4
+hyper_coeff = 1.5625e-6
+
+[time]
+cfl_hyperbolic = 0.4
+cfl_viscous    = 0.25
+t_end          = 12.0
+dt_max         = 1.0
+max_steps      = 100000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "out_tgv256_hyper2"
+snapshot_every   = 1000000          # only the initial step-0 snapshot
+stats_every      = 50               # CSV + spectra dump cadence
+checkpoint_every = 2000             # ~20 ckpts to t=12 at dt~3.17e-4
+write_spectra    = true
+write_helmholtz  = true

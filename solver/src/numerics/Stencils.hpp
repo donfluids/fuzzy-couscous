@@ -33,6 +33,20 @@ inline Real d2dx2_6(const Real* __restrict__ f, Index stride, Real inv_dx2) {
       + a0 *  f[0]);
 }
 
+// 4th-order central second derivative. Coefficients on f[-2..+2]:
+//   (-1, 16, -30, 16, -1) / (12 dx^2)
+// Radius 2 so three composed Laplacians fit in NGHOST = 6 -- used only by
+// the nabla^6 hyperdissipation path.
+inline Real d2dx2_4(const Real* __restrict__ f, Index stride, Real inv_dx2) {
+    constexpr Real a2 = -1.0  / 12.0;
+    constexpr Real a1 = 16.0  / 12.0;
+    constexpr Real a0 = -30.0 / 12.0;
+    return inv_dx2 * (
+        a2 * (f[ 2 * stride] + f[-2 * stride])
+      + a1 * (f[ 1 * stride] + f[-1 * stride])
+      + a0 *  f[0]);
+}
+
 // 6th-order explicit Lele low-pass filter (a0=11/16, a1=15/32, a2=-3/16,
 // a3=1/32; coefficients sum to 1). Fits within RADIUS ghost cells.
 inline Real filter_6(const Real* __restrict__ f, Index stride) {

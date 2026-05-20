@@ -3,6 +3,7 @@
 #include "core/Field3D.hpp"
 #include "numerics/Ducros.hpp"
 #include "numerics/Gradients.hpp"
+#include "numerics/HyperdissipationSpectral.hpp"
 #include "numerics/RhsScratch.hpp"
 #include "numerics/Stencils.hpp"
 #include "numerics/WENO5.hpp"
@@ -466,6 +467,86 @@ static void add_rhs_hyperdissipation(const State& U, const Grid& g,
     }
 }
 
+// Composed (nabla^2)^3 applied per conserved variable as +nu_h6 * Lap^3(U).
+// Sign flips relative to nabla^4: (nabla^2)^n sin(kx) = (-k^2)^n sin(kx), so
+// to get the decay rate -nu_{2n} k^{2n} we use coefficient (-1)^{n+1}; n=3
+// gives +1.
+//
+// Pass 1: lap  = nabla^2 U  on interior + 4 ghost rings.
+// Pass 2: lap2 = nabla^2 lap on interior + 2 ghost rings.
+// Pass 3: nabla^2 lap2 on interior, ADDED to RHS with sign +nu_h6.
+// Each pass uses the radius-2 (4th-order accurate) Laplacian d2dx2_4 so
+// 3 * 2 = 6 ghost cells suffice. NGHOST = 6 is exactly used.
+static void add_rhs_hyperdissipation6(const State& U, const Grid& g,
+                                      Real nu_h6, Field3D& lap, Field3D& lap2,
+                                      State& Rhs) {
+    if (nu_h6 <= 0.0) return;
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+    const Real inv_dx2 = 1.0 / (g.dx() * g.dx());
+    const Real inv_dy2 = (ny > 1) ? 1.0 / (g.dy() * g.dy()) : 0.0;
+    const Real inv_dz2 = (nz > 1) ? 1.0 / (g.dz() * g.dz()) : 0.0;
+    constexpr int R = 2;
+    const Index sx = 1;
+
+    const int lo1 = -ng + R,         hi1_x = nx + ng - R,
+                                     hi1_y = ny + ng - R,
+                                     hi1_z = nz + ng - R;
+    const int lo2 = -ng + 2 * R,     hi2_x = nx + ng - 2 * R,
+                                     hi2_y = ny + ng - 2 * R,
+                                     hi2_z = nz + ng - 2 * R;
+
+    for (int v = 0; v < NCONS; ++v) {
+        const Field3D& Uv = U[v];
+        const Index sy = Uv.ldx();
+        const Index sz = Uv.ldxy();
+        const Index lsx = 1, lsy = lap.ldx(), lsz = lap.ldxy();
+        const Index l2sx = 1, l2sy = lap2.ldx(), l2sz = lap2.ldxy();
+
+        // PASS 1: lap = nabla^2 U on [-4, n+4)
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = lo1; k < hi1_z; ++k)
+            for (int j = lo1; j < hi1_y; ++j) {
+#pragma omp simd
+                for (int i = lo1; i < hi1_x; ++i) {
+                    const Real* p = &Uv(i, j, k);
+                    Real L = stencil::d2dx2_4(p, sx, inv_dx2);
+                    if (ny > 1) L += stencil::d2dx2_4(p, sy, inv_dy2);
+                    if (nz > 1) L += stencil::d2dx2_4(p, sz, inv_dz2);
+                    lap(i, j, k) = L;
+                }
+            }
+
+        // PASS 2: lap2 = nabla^2 lap on [-2, n+2)
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = lo2; k < hi2_z; ++k)
+            for (int j = lo2; j < hi2_y; ++j) {
+#pragma omp simd
+                for (int i = lo2; i < hi2_x; ++i) {
+                    const Real* q = &lap(i, j, k);
+                    Real L = stencil::d2dx2_4(q, lsx, inv_dx2);
+                    if (ny > 1) L += stencil::d2dx2_4(q, lsy, inv_dy2);
+                    if (nz > 1) L += stencil::d2dx2_4(q, lsz, inv_dz2);
+                    lap2(i, j, k) = L;
+                }
+            }
+
+        Field3D& Rv = Rhs[v];
+        // PASS 3: Rv += nu_h6 * nabla^2 lap2 on [0, n)
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j) {
+#pragma omp simd
+                for (int i = 0; i < nx; ++i) {
+                    const Real* r = &lap2(i, j, k);
+                    Real L3 = stencil::d2dx2_4(r, l2sx, inv_dx2);
+                    if (ny > 1) L3 += stencil::d2dx2_4(r, l2sy, inv_dy2);
+                    if (nz > 1) L3 += stencil::d2dx2_4(r, l2sz, inv_dz2);
+                    Rv(i, j, k) += nu_h6 * L3;
+                }
+            }
+    }
+}
+
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
                      const ViscousParams& vp, RhsScratch& scratch, State& Rhs) {
     if (vp.mu > 0.0) {
@@ -488,7 +569,17 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
             add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
         }
     }
-    add_rhs_hyperdissipation(U, g, vp.hyper_coeff, scratch.lap, Rhs);
+    if (vp.hyper_method == HyperMethod::FiniteDifference) {
+        add_rhs_hyperdissipation(U, g, vp.hyper_coeff, scratch.lap, Rhs);
+        add_rhs_hyperdissipation6(U, g, vp.hyper6_coeff,
+                                  scratch.lap, scratch.lap2, Rhs);
+    } else {
+        if (!scratch.spectral_hyper) {
+            scratch.spectral_hyper = std::make_unique<HyperdissipationSpectral>(
+                U.nx(), U.ny(), U.nz(), vp.spectral_bc_mode);
+        }
+        scratch.spectral_hyper->apply(U, g, vp.hyper_coeff, vp.hyper6_coeff, Rhs);
+    }
 }
 
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,

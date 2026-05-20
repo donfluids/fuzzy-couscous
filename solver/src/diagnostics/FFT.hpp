@@ -16,8 +16,10 @@
 // the implementation via static_assert.
 namespace blast::r2r {
 enum Kind : int {
-    DCT_II = 5,   // FFTW_REDFT10
-    DST_II = 9,   // FFTW_RODFT10
+    DCT_II  = 5,   // FFTW_REDFT10  (forward DCT-II,  even at both ends)
+    DCT_III = 4,   // FFTW_REDFT01  (inverse of DCT-II)
+    DST_II  = 9,   // FFTW_RODFT10  (forward DST-II,  odd at both ends)
+    DST_III = 8,   // FFTW_RODFT01  (inverse of DST-II)
 };
 }  // namespace blast::r2r
 
@@ -49,6 +51,64 @@ private:
 
 // One-shot initialization of FFTW thread support; idempotent.
 void init_fftw_threads();
+
+// Serial real-to-real 3D plan with per-axis cosine/sine kinds. Used by the
+// slip-wall pseudospectral hyperdissipation path: DCT-II for variables
+// even-reflected at the wall (ρ, ρE, tangential momenta) and DST-II for
+// the wall-normal momentum on the axis with the wall. Mirrors the MPI
+// sibling R2R3DPlanMPI but for single-rank use.
+//
+// In-place transform: caller supplies a contiguous nx*ny*nz real buffer,
+// the plan transforms it in place. Layout is i-fastest (FFTW dims
+// labelled outer-to-inner as nz, ny, nx so the fastest dim matches our i).
+class R2R3DPlan {
+public:
+    R2R3DPlan(int nx, int ny, int nz,
+              r2r::Kind kind_z, r2r::Kind kind_y, r2r::Kind kind_x);
+    ~R2R3DPlan();
+    R2R3DPlan(const R2R3DPlan&) = delete;
+    R2R3DPlan& operator=(const R2R3DPlan&) = delete;
+
+    void execute(Real* buf) const;
+
+    int nx() const { return nx_; }
+    int ny() const { return ny_; }
+    int nz() const { return nz_; }
+
+private:
+    int   nx_, ny_, nz_;
+    void* plan_ = nullptr;
+};
+
+// RAII wrapper around an FFTW3 complex-to-real 3D plan. Companion to
+// FFT3DPlan -- callers that only need spectra don't pay for an unused
+// inverse plan, so it lives in its own class. Out-of-place transform:
+// complex input is nx*ny*(nz/2+1)-shaped (same Hermitian-folded layout
+// FFT3DPlan produces); real output is nx*ny*nz, i-fastest.
+//
+// NOTE: c2r is unnormalized -- caller must divide the real output by
+// nx*ny*nz to recover the original signal. (Absorbing the 1/N into a
+// spectral multiplier is the cheapest place to do it.)
+class FFT3DInversePlan {
+public:
+    FFT3DInversePlan(int nx, int ny, int nz);
+    ~FFT3DInversePlan();
+    FFT3DInversePlan(const FFT3DInversePlan&) = delete;
+    FFT3DInversePlan& operator=(const FFT3DInversePlan&) = delete;
+
+    void inverse(std::complex<Real>* in, Real* out) const;
+
+    int nx() const { return nx_; }
+    int ny() const { return ny_; }
+    int nz() const { return nz_; }
+    std::size_t complex_size() const {
+        return static_cast<std::size_t>(nx_) * ny_ * (nz_ / 2 + 1);
+    }
+
+private:
+    int   nx_, ny_, nz_;
+    void* plan_ = nullptr;
+};
 
 #ifdef BLAST_MPI
 // Distributed FFTW3-MPI r2c plan. Uses 1D slab decomposition along the

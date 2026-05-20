@@ -52,6 +52,67 @@ void FFT3DPlan::forward(const Real* in, std::complex<Real>* out) const {
         reinterpret_cast<fftw_complex*>(out));
 }
 
+FFT3DInversePlan::FFT3DInversePlan(int nx, int ny, int nz)
+    : nx_(nx), ny_(ny), nz_(nz) {
+    init_fftw_threads();
+    auto* in  = fftw_alloc_complex(complex_size());
+    auto* out = fftw_alloc_real(static_cast<std::size_t>(nx_) * ny_ * nz_);
+    // Match the dim labelling used in FFT3DPlan: (nz, ny, nx) so FFTW's
+    // fastest dim corresponds to our i-fastest layout.
+    plan_ = static_cast<void*>(fftw_plan_dft_c2r_3d(
+        nz_, ny_, nx_, in, out, FFTW_ESTIMATE | FFTW_DESTROY_INPUT));
+    fftw_free(in);
+    fftw_free(out);
+}
+
+FFT3DInversePlan::~FFT3DInversePlan() {
+    if (plan_) fftw_destroy_plan(static_cast<fftw_plan>(plan_));
+}
+
+void FFT3DInversePlan::inverse(std::complex<Real>* in, Real* out) const {
+    fftw_execute_dft_c2r(
+        static_cast<fftw_plan>(plan_),
+        reinterpret_cast<fftw_complex*>(in),
+        out);
+}
+
+// Verify our duplicated r2r kind enums match FFTW's at compile time.
+// (The MPI block re-declares the DCT_II/DST_II asserts; keep these for
+// builds without BLAST_MPI defined, and add the inverse-kind asserts.)
+static_assert(static_cast<int>(r2r::DCT_II)  == FFTW_REDFT10,
+              "r2r::DCT_II must equal FFTW_REDFT10");
+static_assert(static_cast<int>(r2r::DCT_III) == FFTW_REDFT01,
+              "r2r::DCT_III must equal FFTW_REDFT01");
+static_assert(static_cast<int>(r2r::DST_II)  == FFTW_RODFT10,
+              "r2r::DST_II must equal FFTW_RODFT10");
+static_assert(static_cast<int>(r2r::DST_III) == FFTW_RODFT01,
+              "r2r::DST_III must equal FFTW_RODFT01");
+
+R2R3DPlan::R2R3DPlan(int nx, int ny, int nz,
+                     r2r::Kind kind_z, r2r::Kind kind_y, r2r::Kind kind_x)
+    : nx_(nx), ny_(ny), nz_(nz) {
+    init_fftw_threads();
+    auto* buf = fftw_alloc_real(static_cast<std::size_t>(nx_) * ny_ * nz_);
+    const fftw_r2r_kind kinds[3] = {
+        static_cast<fftw_r2r_kind>(kind_z),
+        static_cast<fftw_r2r_kind>(kind_y),
+        static_cast<fftw_r2r_kind>(kind_x),
+    };
+    plan_ = static_cast<void*>(fftw_plan_r2r_3d(
+        nz_, ny_, nx_, buf, buf,
+        kinds[0], kinds[1], kinds[2],
+        FFTW_ESTIMATE));
+    fftw_free(buf);
+}
+
+R2R3DPlan::~R2R3DPlan() {
+    if (plan_) fftw_destroy_plan(static_cast<fftw_plan>(plan_));
+}
+
+void R2R3DPlan::execute(Real* buf) const {
+    fftw_execute_r2r(static_cast<fftw_plan>(plan_), buf, buf);
+}
+
 #ifdef BLAST_MPI
 
 namespace {

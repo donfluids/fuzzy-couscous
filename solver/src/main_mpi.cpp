@@ -76,6 +76,15 @@ ViscousParams to_viscous(const PhysicsConfig& p) {
     vp.prandtl = p.prandtl;
     vp.bulk_visc = p.bulk_visc;
     vp.hyper_coeff = p.hyper_coeff;
+    vp.hyper6_coeff = p.hyper6_coeff;
+    vp.hyper_method = p.hyper_method;
+    return vp;
+}
+
+ViscousParams to_viscous(const PhysicsConfig& p, const BCSet& bc) {
+    ViscousParams vp = to_viscous(p);
+    vp.spectral_bc_mode = bc.all_slip_wall() ? SpectralBCMode::SlipWall
+                                             : SpectralBCMode::Periodic;
     return vp;
 }
 
@@ -111,6 +120,7 @@ int main(int argc, char** argv) {
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
+
     // Nested scope: all MPI-owning objects must destruct BEFORE MPI_Finalize.
     {
     Grid global_g = c.grid;
@@ -128,7 +138,7 @@ int main(int argc, char** argv) {
     }
 
     IdealGas eos{c.physics.eos};
-    ViscousParams vp = to_viscous(c.physics);
+    ViscousParams vp = to_viscous(c.physics, c.bc);
 
     State U(local_g.nx, local_g.ny, local_g.nz);
     Real start_time = 0.0;
@@ -155,6 +165,9 @@ int main(int argc, char** argv) {
     apply_bcs(U, bc, domain);
 
     RK3 driver(local_g.nx, local_g.ny, local_g.nz, U.ng());
+    if (vp.hyper_method == HyperMethod::Pseudospectral) {
+        driver.init_spectral_hyper_mpi(global_g, domain, vp.spectral_bc_mode);
+    }
 
     // Spectral OU forcing (shared across ranks, same seed -> bit-exact MPI).
     // Constructed against the GLOBAL grid so all ranks share the same modes.

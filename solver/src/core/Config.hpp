@@ -2,6 +2,7 @@
 
 #include "core/Grid.hpp"
 #include "core/Types.hpp"
+#include "physics/ViscousFlux.hpp"
 
 #include <string>
 
@@ -22,6 +23,13 @@ struct PhysicsConfig {
     // Hyperdissipation coefficient nu_h for the -(nabla^2)^2 U sink.
     // <=0 disables. See ViscousParams::hyper_coeff for the rationale.
     Real     hyper_coeff = 0.0;
+    // Higher-power hyperdissipation coefficient nu_h6 for the
+    // +(nabla^2)^3 U sink. <=0 disables. See ViscousParams::hyper6_coeff.
+    Real     hyper6_coeff = 0.0;
+    // Discretization for both hyperdissipation terms. "fd" (default) uses
+    // composed Laplacian stencils; "spectral" uses an exact FFT operator
+    // and requires all-periodic BCs (validated at config load) and serial.
+    HyperMethod hyper_method = HyperMethod::FiniteDifference;
 };
 
 struct AFPConfig {

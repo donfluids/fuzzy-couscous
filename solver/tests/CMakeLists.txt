@@ -62,6 +62,9 @@ if(BLAST_MPI)
     add_executable(test_mpi_forcing test_mpi_forcing.cpp)
     target_link_libraries(test_mpi_forcing PRIVATE blast_core_mpi)
 
+    add_executable(test_mpi_hyperdissipation test_mpi_hyperdissipation.cpp)
+    target_link_libraries(test_mpi_hyperdissipation PRIVATE blast_core_mpi)
+
     # Run under mpirun at 1, 2, 4 ranks. OpenMPI in containers (Docker/etc.)
     # needs --oversubscribe + the root override.
     set(MPI_ENV "OMPI_ALLOW_RUN_AS_ROOT=1;OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1")
@@ -112,6 +115,14 @@ if(BLAST_MPI)
                     -n ${N}
                     $<TARGET_FILE:test_mpi_forcing>)
         set_tests_properties(mpi_forcing_${N} PROPERTIES
+            ENVIRONMENT "${MPI_ENV}")
+
+        add_test(NAME mpi_hyperdissipation_${N}
+            COMMAND ${MPIEXEC_EXECUTABLE}
+                    --oversubscribe
+                    -n ${N}
+                    $<TARGET_FILE:test_mpi_hyperdissipation>)
+        set_tests_properties(mpi_hyperdissipation_${N} PROPERTIES
             ENVIRONMENT "${MPI_ENV}")
     endforeach()
 endif()

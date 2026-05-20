@@ -4,7 +4,11 @@
 #include "core/State.hpp"
 #include "numerics/Gradients.hpp"
 
+#include <memory>
+
 namespace blast {
+
+class HyperdissipationSpectralBase;
 
 // Per-step scratch buffers used by the RHS pipeline. The previous
 // implementation allocated ~30 Field3D objects on EACH RHS call (3 per
@@ -29,12 +33,27 @@ struct RhsScratch {
     CellGradients G;
     State   Flux_visc;
 
-    // Hyperdissipation
+    // Hyperdissipation. `lap` holds the first composed Laplacian; `lap2`
+    // is the second intermediate for the nabla^6 path and is unused when
+    // hyper6_coeff == 0.
     Field3D lap;
+    Field3D lap2;
+
+    // Pseudospectral hyperdissipation plan + buffers. Either the serial
+    // or MPI implementation (chosen by RK3::init_spectral_hyper_mpi or by
+    // lazy serial construction in add_rhs_viscous).
+    std::unique_ptr<HyperdissipationSpectralBase> spectral_hyper;
 
     // Allocate every buffer for a grid of given local extent + ghost count.
     // Call once per RK3 driver lifetime.
     void allocate(int nx, int ny, int nz, int ng);
+
+    // Out-of-line dtor so the unique_ptr<HyperdissipationSpectral> can be
+    // declared with a forward-declared payload.
+    RhsScratch();
+    ~RhsScratch();
+    RhsScratch(const RhsScratch&) = delete;
+    RhsScratch& operator=(const RhsScratch&) = delete;
 };
 
 }  // namespace blast

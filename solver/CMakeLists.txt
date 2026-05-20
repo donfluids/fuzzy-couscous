@@ -108,6 +108,7 @@ set(BLAST_CORE_SOURCES
     src/bc/BC.cpp
     src/numerics/RHS.cpp
     src/numerics/RhsScratch.cpp
+    src/numerics/HyperdissipationSpectral.cpp
     src/numerics/RK3.cpp
     src/numerics/Ducros.cpp
     src/numerics/Filter.cpp
@@ -172,6 +173,7 @@ if(BLAST_MPI)
         ${BLAST_CORE_SOURCES}
         src/parallel/Domain.cpp
         src/parallel/Halo.cpp
+        src/parallel/SlabRedistribute.cpp
     )
     target_compile_definitions(blast_core_mpi PUBLIC BLAST_MPI)
     target_include_directories(blast_core_mpi PUBLIC

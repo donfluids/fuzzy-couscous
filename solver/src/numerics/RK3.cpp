@@ -1,6 +1,7 @@
 #include "numerics/RK3.hpp"
 
 #include "bc/BC.hpp"
+#include "numerics/HyperdissipationSpectral.hpp"
 #include "numerics/RHS.hpp"
 
 namespace blast {
@@ -21,7 +22,7 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                const ViscousParams& vp, Real dt) {
     auto eval_rhs = [&](const State& Uin) {
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0)
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 
@@ -43,7 +44,7 @@ void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,
                            Real dt, Real t_current, const SourceCallback& src) {
     auto eval_rhs = [&](const State& Uin, Real t_stage) {
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0)
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
         if (src) src(k_, g, t_stage);
     };
@@ -62,6 +63,12 @@ void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,
 }
 
 #ifdef BLAST_MPI
+void RK3::init_spectral_hyper_mpi(const Grid& global_grid, const Domain& d,
+                                  SpectralBCMode mode) {
+    scratch_.spectral_hyper =
+        std::make_unique<HyperdissipationSpectralMpi>(global_grid, d, mode);
+}
+
 void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                    const ViscousParams& vp, Real dt,
                    const Domain& d, Halo& halo) {
@@ -69,7 +76,7 @@ void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos
         halo.exchange(Uin);
         apply_bcs(Uin, bc, d);
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0)
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 

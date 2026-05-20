@@ -47,6 +47,13 @@ public:
     void step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                   const ViscousParams& vp, Real dt,
                   const Domain& d, Halo& halo);
+
+    // Build the MPI pseudospectral hyperdissipation operator with the
+    // global grid, Cartesian domain, and BC-driven basis mode. Call once
+    // before the time loop when ViscousParams::hyper_method ==
+    // Pseudospectral on an MPI run.
+    void init_spectral_hyper_mpi(const Grid& global_grid, const Domain& d,
+                                 SpectralBCMode mode);
 #endif
 
 private:

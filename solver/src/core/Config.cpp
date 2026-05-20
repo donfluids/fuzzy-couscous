@@ -17,6 +17,12 @@ BCType parse_bc(std::string_view s) {
     throw std::invalid_argument("Unknown BC: " + std::string(s));
 }
 
+HyperMethod parse_hyper_method(std::string_view s) {
+    if (s == "fd" || s == "finite_difference") return HyperMethod::FiniteDifference;
+    if (s == "spectral" || s == "pseudospectral") return HyperMethod::Pseudospectral;
+    throw std::invalid_argument("Unknown hyper_method: " + std::string(s));
+}
+
 ICType parse_ic(std::string_view s) {
     if (s == "sod_x")          return ICType::SodX;
     if (s == "shu_osher_x")    return ICType::ShuOsherX;
@@ -89,7 +95,18 @@ Config load_config(const std::string& path) {
     c.physics.mu         = pick<double>(ph["mu"],     c.physics.mu);
     c.physics.prandtl    = pick<double>(ph["prandtl"], c.physics.prandtl);
     c.physics.bulk_visc  = pick<double>(ph["bulk_visc"], c.physics.bulk_visc);
-    c.physics.hyper_coeff = pick<double>(ph["hyper_coeff"], c.physics.hyper_coeff);
+    c.physics.hyper_coeff  = pick<double>(ph["hyper_coeff"],  c.physics.hyper_coeff);
+    c.physics.hyper6_coeff = pick<double>(ph["hyper6_coeff"], c.physics.hyper6_coeff);
+    if (auto s = ph["hyper_method"].value<std::string>())
+        c.physics.hyper_method = parse_hyper_method(*s);
+
+    if (c.physics.hyper_method == HyperMethod::Pseudospectral
+        && !c.bc.all_periodic() && !c.bc.all_slip_wall()) {
+        throw std::runtime_error(
+            "hyper_method = \"spectral\" requires every axis to be "
+            "uniformly \"periodic\" or uniformly \"slip_wall\" "
+            "(mixed BCs are not supported)");
+    }
 
     auto a = tbl["afp"];
     c.afp.enabled = pick<bool>(a["enabled"], c.afp.enabled);

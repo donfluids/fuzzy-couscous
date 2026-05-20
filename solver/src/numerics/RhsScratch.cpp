@@ -1,6 +1,11 @@
 #include "numerics/RhsScratch.hpp"
 
+#include "numerics/HyperdissipationSpectral.hpp"
+
 namespace blast {
+
+RhsScratch::RhsScratch() = default;
+RhsScratch::~RhsScratch() = default;
 
 void RhsScratch::allocate(int nx, int ny, int nz, int ng) {
     theta.resize(nx, ny, nz, ng);
@@ -17,6 +22,7 @@ void RhsScratch::allocate(int nx, int ny, int nz, int ng) {
     Flux_visc.allocate(nx, ny, nz, ng);
 
     lap.resize(nx, ny, nz, ng);
+    lap2.resize(nx, ny, nz, ng);
 }
 
 }  // namespace blast

@@ -11,6 +11,13 @@ out_*/
 __pycache__/
 *.pyc
 
+# Run artifacts: data outputs, run logs, PGO profiling data
+*.npz
+*.log
+*.gcda
+scaling/pgo_profile/
+scaling/pgo_train_*_out/
+
 # Permit committed figures under paper/figures/
 !paper/figures/*.png
 !paper/figures/*.pdf

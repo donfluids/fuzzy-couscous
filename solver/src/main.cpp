@@ -72,6 +72,15 @@ ViscousParams to_viscous(const PhysicsConfig& p) {
     vp.prandtl = p.prandtl;
     vp.bulk_visc = p.bulk_visc;
     vp.hyper_coeff = p.hyper_coeff;
+    vp.hyper6_coeff = p.hyper6_coeff;
+    vp.hyper_method = p.hyper_method;
+    return vp;
+}
+
+ViscousParams to_viscous(const PhysicsConfig& p, const BCSet& bc) {
+    ViscousParams vp = to_viscous(p);
+    vp.spectral_bc_mode = bc.all_slip_wall() ? SpectralBCMode::SlipWall
+                                             : SpectralBCMode::Periodic;
     return vp;
 }
 
@@ -115,7 +124,7 @@ int main(int argc, char** argv) {
                c.time.t_end, c.time.cfl_hyperbolic, c.time.cfl_viscous);
 
     IdealGas eos{c.physics.eos};
-    ViscousParams vp = to_viscous(c.physics);
+    ViscousParams vp = to_viscous(c.physics, c.bc);
 
     State U(c.grid.nx, c.grid.ny, c.grid.nz);
     Real start_time = 0.0;

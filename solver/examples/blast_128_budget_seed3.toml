@@ -1,0 +1,57 @@
+# 128^3 blast ensemble member with frequent snapshots for BHR budget analysis.
+run_name = "blast_128_budget_seed3"
+
+[grid]
+nx = 128
+ny = 128
+nz = 128
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.1
+rho_B          = 10.0
+T_B            = 100.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2
+tanh_thickness = 0.012
+ensemble_amp   = 0.05
+ensemble_seed  = 3
+
+[physics]
+gamma        = 1.4
+R            = 1.0
+mu           = 5.0e-4
+prandtl      = 0.71
+bulk_visc    = 0.0
+hyper_coeff  = 0.0
+hyper6_coeff = 2.5e-14
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.5
+dt_max         = 1.0
+max_steps      = 200000
+
+[output]
+out_dir          = "out_blast_128_budget_seed3"
+snapshot_every   = 100
+stats_every      = 20
+checkpoint_every = 5000
+write_spectra    = true
+write_helmholtz  = true

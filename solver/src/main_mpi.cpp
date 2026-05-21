@@ -24,6 +24,7 @@
 #include <memory>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 
@@ -211,6 +212,7 @@ int main(int argc, char** argv) {
     std::ofstream stats_file;
     if (world_rank == 0) {
         stats_file.open(c.output.out_dir + "/" + c.run_name + "_stats.csv");
+        stats_file << std::setprecision(12);   // resolve conservation drift in the CSV
         stats_file << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,"
                      "T_mean,omega2,div2,eps_total,eps_sol,eps_dil,e_total,e_int\n";
     }
@@ -249,9 +251,14 @@ int main(int argc, char** argv) {
             r2r::DST_II, r2r::DCT_II, r2r::DCT_II);
     }
 
+    Real e_total_0 = 0.0, rho_mean_0 = 0.0;
+    bool cons0_set = false;
     auto log_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
         auto b = dissipation_budget(U, local_g, eos, vp, N_global, domain.comm());
+        if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
+        const Real e_drift = (e_total_0 != 0.0) ? s.e_total / e_total_0 - 1.0 : 0.0;
+        const Real m_drift = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 - 1.0 : 0.0;
         HelmholtzResult h{};
         ShellSpectrum sp{};
         if (c.output.write_helmholtz || c.output.write_spectra) {
@@ -286,10 +293,12 @@ int main(int argc, char** argv) {
                        << s.e_total << ',' << s.e_int << '\n';
             stats_file.flush();
             BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
-                       "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e}",
+                       "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
+                       "e_tot={:.6e} dE/E0={:+.2e} dM/M0={:+.2e}",
                        step, t, dt, s.ke_total, s.tke, s.M_t,
                        b.eps_sol, b.eps_dil,
-                       (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0));
+                       (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
+                       s.e_total, e_drift, m_drift);
         }
     };
 

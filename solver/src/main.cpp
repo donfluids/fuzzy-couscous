@@ -21,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -226,20 +227,23 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(c.output.out_dir);
     HDF5Writer writer(c.output.out_dir, c.run_name);
     std::ofstream stats_file(c.output.out_dir + "/" + c.run_name + "_stats.csv");
+    stats_file << std::setprecision(12);   // resolve conservation drift in the CSV
     log_header(stats_file);
 
     FFT3DPlan fft(c.grid.nx, c.grid.ny, c.grid.nz);
 
-    // Total-energy conservation monitor: <rho E> should stay constant for a
-    // closed chamber (no forcing); the relative drift dE/E0 flags any
-    // non-conservation (boundary leakage or a non-conservative term).
-    Real e_total_0 = 0.0;
-    bool e0_set = false;
+    // Conservation monitors: for a closed chamber (no forcing) both the total
+    // energy <rho E> and the total mass <rho> are constant; the relative drifts
+    // dE/E0, dM/M0 flag any non-conservation (boundary leakage, a
+    // non-conservative term, or incipient instability).
+    Real e_total_0 = 0.0, rho_mean_0 = 0.0;
+    bool cons0_set = false;
     auto write_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos);
         auto b = dissipation_budget(U, c.grid, eos, vp);
-        if (!e0_set) { e_total_0 = s.e_total; e0_set = true; }
+        if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
         const Real e_drift = (e_total_0 != 0.0) ? s.e_total / e_total_0 - 1.0 : 0.0;
+        const Real m_drift = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 - 1.0 : 0.0;
         HelmholtzResult h{};
         ShellSpectrum sp{};
         if (c.output.write_helmholtz || c.output.write_spectra)
@@ -252,11 +256,11 @@ int main(int argc, char** argv) {
         stats_file.flush();
         BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
                    "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
-                   "e_tot={:.6e} dE/E0={:+.2e}",
+                   "e_tot={:.6e} dE/E0={:+.2e} dM/M0={:+.2e}",
                    step, t, dt, s.ke_total, s.tke, s.M_t,
                    b.eps_sol, b.eps_dil,
                    (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
-                   s.e_total, e_drift);
+                   s.e_total, e_drift, m_drift);
     };
 
     Real t = start_time;

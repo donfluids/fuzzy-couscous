@@ -174,6 +174,21 @@ def slope_at(k, E, kq):
     return float(np.interp(kq, kk, sl))
 
 
+def band_slope(k, E, klo, khi):
+    """Least-squares log-log slope over [klo, khi], using only nonzero shells.
+
+    Robust for the slip-wall DCT spectra, whose shell binning leaves many bins
+    exactly zero (a naive polyfit over them returns NaN). Returns
+    ``(slope, nbins)``; slope is NaN when fewer than two nonzero shells fall in
+    the band.
+    """
+    m = (k >= klo) & (k <= khi) & (E > 0.0)
+    n = int(m.sum())
+    if n < 2:
+        return float("nan"), n
+    return float(np.polyfit(np.log(k[m]), np.log(E[m]), 1)[0]), n
+
+
 def powerlaw_range(k, E, target, tol):
     """Longest contiguous k-range whose local slope is within ``tol`` of ``target``.
 
@@ -248,21 +263,26 @@ def report(path: Path, win, target, tol):
           f"dil={pk['E_dil']:.2f}\n")
 
     # -- turbulence: spectral shape / cascade only ---------------------------
+    # Fit the slope over the post-peak inertial-candidate band, defined relative
+    # to the spectrum peak so it lands in resolved, nonzero shells (robust to the
+    # sparse slip-wall DCT binning, where fixed low-k probes would hit zeros).
+    pkt = peak_k(k, Et)[0]
+    b_lo = 1.5 * pkt
+    b_hi = min(4.0 * pkt, k.max())
     print(f"  === dilatational TURBULENCE (spectral shape: cascade character) ===")
-    print(f"    target slope = {target:+.2f}  (tol {tol})")
-    print(f"    {'component':9s} {'slope@k6':>9s} {'slope@k16':>10s}   "
-          f"{'power-law range':<28s} verdict")
+    print(f"    target slope = {target:+.2f} (tol {tol});  post-peak band "
+          f"k=[{b_lo:.1f},{b_hi:.1f}] = [1.5,4]x peak-k {pkt:.1f}")
+    print(f"    {'component':9s} {'band slope':>12s}   {'power-law range':<26s} verdict")
     for c in COMPONENTS:
         E = spec[c]
+        s, nb = band_slope(k, E, b_lo, b_hi)
+        sstr = f"{s:+.2f} ({nb}b)" if np.isfinite(s) else "n/a"
         rng = powerlaw_range(k, E, target, tol)
-        if rng["nbins"]:
-            rng_s = (f"k={rng['k_lo']:.1f}-{rng['k_hi']:.1f} "
-                     f"({rng['octaves']:.1f} oct, {rng['nbins']} bins)")
-        else:
-            rng_s = "none"
+        rng_s = (f"k={rng['k_lo']:.1f}-{rng['k_hi']:.1f} "
+                 f"({rng['octaves']:.1f} oct, {rng['nbins']}b)"
+                 if rng["nbins"] else "none")
         verdict = classify_shape(k, E, target, tol)
-        print(f"    {c:9s} {slope_at(k,E,6):+9.2f} {slope_at(k,E,16):+10.2f}   "
-              f"{rng_s:<28s} {verdict}")
+        print(f"    {c:9s} {sstr:>12s}   {rng_s:<26s} {verdict}")
     print()
 
 

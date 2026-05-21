@@ -34,14 +34,14 @@ TCMP = 0.10
 
 def load_stats(d, n):
     t, KE, tke = [], [], []
-    with open(ROOT / d / f"{n}_stats.csv") as f:
+    with open(ROOT / "runs" / d / f"{n}_stats.csv") as f:
         for r in csv.DictReader(f):
             t.append(float(r["time"])); KE.append(float(r["KE"])); tke.append(float(r["tke"]))
     return np.array(t), np.array(KE), np.array(tke)
 
 
 def load_spec(d, n, tt):
-    p = ROOT / d / f"{n}_spectra.h5"
+    p = ROOT / "runs" / d / f"{n}_spectra.h5"
     with h5py.File(p, "r") as f:
         key = min(f.keys(), key=lambda k: abs(float(f[k]["time"][0]) - tt))
         g = f[key]

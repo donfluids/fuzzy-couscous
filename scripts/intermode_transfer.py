@@ -36,6 +36,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 DATA = ROOT / "data"
 
 # ---- N-agnostic FFT grids (cached per resolution) -------------------------
@@ -111,7 +112,7 @@ def main():
     ap.add_argument("--label", default=None, help="output tag (default: from N)")
     args = ap.parse_args()
 
-    snaps = sorted(p for p in glob.glob(str(ROOT / args.run / f"{args.name}_*.h5"))
+    snaps = sorted(p for p in glob.glob(str(RUNS / args.run / f"{args.name}_*.h5"))
                    if not p.endswith(".ckpt.h5") and not p.endswith("_spectra.h5"))
     sel = []
     for p in snaps:

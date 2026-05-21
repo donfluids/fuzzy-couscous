@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intermode_transfer import ddx, load_xyz, helmholtz, kbin, nbin, kphys  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 DATA = ROOT / "data"
 MU = 5.0e-4
 WIN = (0.08, 0.10)
@@ -68,7 +69,7 @@ def main():
 
     Ts = Es = Ds = None; tav = 0.0; n = 0; N = None
     for d, name in case_runs(args.case):
-        for p in sorted(glob.glob(str(ROOT / d / f"{name}_*.h5"))):
+        for p in sorted(glob.glob(str(RUNS / d / f"{name}_*.h5"))):
             if p.endswith(".ckpt.h5") or p.endswith("_spectra.h5"):
                 continue
             with h5py.File(p, "r") as f:

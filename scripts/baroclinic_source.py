@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 DATA = ROOT / "data"
 NB = 3
 
@@ -65,7 +66,7 @@ def main():
     ap.add_argument("--case", default="256", choices=["128", "256"])
     args = ap.parse_args()
     run, name = case_run(args.case)
-    rd = ROOT / run
+    rd = RUNS / run
     snaps = snapshots(rd, name)
     if not snaps:
         print("no snapshots", file=sys.stderr); return 1

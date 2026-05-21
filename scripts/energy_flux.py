@@ -51,7 +51,7 @@ def case_runs(case):
 
 def snaps(d, name):
     out = []
-    for p in sorted(glob.glob(str(ROOT / d / f"{name}_*.h5"))):
+    for p in sorted(glob.glob(str(RUNS / d / f"{name}_*.h5"))):
         if p.endswith(".ckpt.h5") or p.endswith("_spectra.h5"):
             continue
         with h5py.File(p, "r") as f:

@@ -39,6 +39,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 DATA = ROOT / "data"
 N = 128
 L = 1.0
@@ -107,7 +108,7 @@ def main():
     ap.add_argument("--stride", type=int, default=1, help="use every Nth snapshot")
     args = ap.parse_args()
 
-    snaps = snapshots(ROOT / args.run, args.name)[:: args.stride]
+    snaps = snapshots(RUNS / args.run, args.name)[:: args.stride]
     if not snaps:
         print("no snapshots", file=sys.stderr); return 1
     print(f"{len(snaps)} snapshots from {args.run}")

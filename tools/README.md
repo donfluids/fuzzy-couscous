@@ -32,9 +32,13 @@ quantities.
 
 Overlays shell-averaged spectra E(k) at several times from
 `<run>_spectra.h5`. Optional `--solenoidal` adds dashed/dotted curves for the
-Helmholtz components, annotates the `K_dil/K_tot` *energy* fraction per time,
-and adds a second panel with the local-slope (*turbulence*) of the total
-spectrum.
+Helmholtz components (solid total, `--` sol, `:` dil), annotates the
+`K_sol/K_tot` and `K_dil/K_tot` *energy* fractions per time, and adds a second
+panel with the per-component local-slope (*turbulence*). The slope panel is
+smoothed by a log-k local fit (`--slope-smooth`, ln-k half-width) and masked
+below the dissipation tail (`--slope-floor`, fraction of the component peak) so
+the linear-k bin noise does not swamp it; this affects the *plot* only, not the
+slope numbers reported by `spectrum_shape.py`.
 
 ```bash
 $PYTHON tools/plot_spectra.py solver/build/out_chamber_smoke/chamber_smoke_spectra.h5 \

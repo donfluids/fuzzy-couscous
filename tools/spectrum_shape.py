@@ -115,18 +115,55 @@ def peak_k(k, E):
 
 
 # ------------------------------------------------------------ spectral shape
-def local_slope(k, E):
+def local_slope(k, E, rel_floor=0.0):
     """``d(log E)/d(log k)`` on the strictly positive (k > 0, E > 0) shells.
+
+    ``rel_floor``: if > 0, also drop shells where ``E < rel_floor * max(E)`` over
+    the resolved range. This trims the roundoff tail below the dissipation
+    roll-off, where ``E`` is ~0 and the slope is meaningless oscillation -- useful
+    for plots. The default 0.0 keeps every positive shell, so callers that
+    measure the slope (slope_at, powerlaw_range) are unaffected.
 
     Returns empty arrays when fewer than two shells qualify (e.g. an all-zero
     spectrum at t=0), since the gradient is undefined there.
     """
     m = (k > 0) & (E > 0)
+    if rel_floor > 0 and m.any():
+        m &= E > rel_floor * E[m].max()
     if int(m.sum()) < 2:
         return k[m], np.zeros(int(m.sum()))
     lk = np.log(k[m])
     lE = np.log(E[m])
     return k[m], np.gradient(lE, lk)
+
+
+def smooth_slope(k, E, dlnk=0.4, rel_floor=0.0):
+    """Local log-log slope via least-squares fit over a +/- ``dlnk`` ln-k window.
+
+    For *display*: the raw 2-point ``local_slope`` is noisy because the shell
+    bins are linear in k (hundreds of densely-packed bins at high k), so adjacent
+    differences swing wildly. Fitting log E vs log k over a fixed ln-k window
+    averages many bins where they are dense (high k) and few where they are
+    sparse (low k), giving a readable curve without distorting the trend. The
+    measurement path (``slope_at`` / ``powerlaw_range``) keeps using the raw
+    2-point slope, so reported numbers are unaffected.
+    """
+    m = (k > 0) & (E > 0)
+    if rel_floor > 0 and m.any():
+        m &= E > rel_floor * E[m].max()
+    kk = k[m]
+    if kk.size < 3:
+        return kk, np.zeros(kk.size)
+    lk = np.log(kk)
+    lE = np.log(E[m])
+    sl = np.empty(kk.size)
+    for i in range(kk.size):
+        w = np.abs(lk - lk[i]) <= dlnk
+        if int(w.sum()) < 3:                       # widen to nearest 3 points
+            w = np.zeros(kk.size, bool)
+            w[np.argsort(np.abs(lk - lk[i]))[:3]] = True
+        sl[i] = np.polyfit(lk[w], lE[w], 1)[0]
+    return kk, sl
 
 
 def slope_at(k, E, kq):

@@ -42,12 +42,14 @@ RUNS = ROOT / "runs"
 # keeps working.
 sys.path.insert(0, str(ROOT / "tools"))
 from spectrum_shape import (  # noqa: E402
-    tavg, local_slope, integrated_energy, peak_k, slope_at,
+    tavg, local_slope, smooth_slope, integrated_energy, peak_k, slope_at,
     powerlaw_range, classify_shape,
 )
 
 TARGET = -5.0 / 3.0
 TOL = 0.25
+SLOPE_FLOOR = 1e-6  # mask the slope plot below this fraction of the peak
+SLOPE_SMOOTH = 0.4  # half-width in ln(k) of the slope-plot smoothing fit
 
 
 def spectra_path(tag, seed):
@@ -116,7 +118,7 @@ def main():
 
     a = ax[1]
     for name in ("E_total", "E_sol", "E_dil"):
-        kk, sl = local_slope(k, spec[name])
+        kk, sl = smooth_slope(k, spec[name], dlnk=SLOPE_SMOOTH, rel_floor=SLOPE_FLOOR)
         a.semilogx(kk, sl, lw=2, color=cm[name], label=name)
     a.axhline(TARGET, color="green", ls="--", lw=1.4, label=r"$-5/3$")
     a.set_ylim(-4, 3); a.set_xlim(1.5, k.max())

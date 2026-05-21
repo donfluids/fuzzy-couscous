@@ -28,7 +28,7 @@ import numpy as np  # noqa: E402
 # is importable directly).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from spectrum_shape import (  # noqa: E402
-    list_steps, load_step, local_slope, integrated_energy,
+    list_steps, load_step, smooth_slope, integrated_energy,
 )
 
 
@@ -43,6 +43,12 @@ def main() -> int:
                     help="also plot solenoidal/dilatational components")
     ap.add_argument("--reference-slope", default="-5/3",
                     help="reference slope (e.g. -5/3, -2). Set to 'none' to omit.")
+    ap.add_argument("--slope-floor", type=float, default=1e-6,
+                    help="mask the slope panel where E < this fraction of the "
+                         "component peak (trims the roundoff tail). 0 = no mask.")
+    ap.add_argument("--slope-smooth", type=float, default=0.4,
+                    help="half-width in ln(k) of the slope-panel smoothing fit "
+                         "(0 = raw 2-point gradient).")
     args = ap.parse_args()
 
     available = list_steps(args.spectra)
@@ -84,7 +90,8 @@ def main() -> int:
             # component (solid total, -- sol, : dil), matching the energy panel;
             # color still encodes time.
             for E, ls in ((d["E_total"], "-"), (d["E_sol"], "--"), (d["E_dil"], ":")):
-                kk, sl = local_slope(k, E)
+                kk, sl = smooth_slope(k, E, dlnk=args.slope_smooth,
+                                      rel_floor=args.slope_floor)
                 axs.semilogx(kk, sl, ls, color=c, lw=1.6,
                              alpha=0.9 if ls == "-" else 0.6)
         else:

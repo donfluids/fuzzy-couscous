@@ -32,11 +32,27 @@ quantities.
 
 Overlays shell-averaged spectra E(k) at several times from
 `<run>_spectra.h5`. Optional `--solenoidal` adds dashed/dotted curves for the
-Helmholtz components.
+Helmholtz components, annotates the `K_dil/K_tot` *energy* fraction per time,
+and adds a second panel with the local-slope (*turbulence*) of the total
+spectrum.
 
 ```bash
 $PYTHON tools/plot_spectra.py solver/build/out_chamber_smoke/chamber_smoke_spectra.h5 \
-    -o spectra.png --solenoidal --reference-slope -5/3
+    -o spectra.png --solenoidal --reference-slope=-5/3
 ```
 
 Steps to plot can be selected explicitly with `--steps 50,150,300,600`.
+
+### `spectrum_shape.py`
+
+Reports the two distinct axes of a spectrum from `<run>_spectra.h5`, separately:
+the **energy** (integrated `K_sol`/`K_dil` magnitudes and fractions) and the
+**turbulence** (local slope + contiguous power-law range, per component), so
+dilatational *energy* (how much) is never read as dilatational *turbulence*
+(whether it cascades). Shared shape/energy helpers used by `plot_spectra.py`
+and `scripts/spectrum_components.py`.
+
+```bash
+$PYTHON tools/spectrum_shape.py runs/out_blast_128_budget_seed1/blast_128_budget_seed1_spectra.h5 \
+    --t0 0.01 --t1 0.02 --target-slope -5/3
+```

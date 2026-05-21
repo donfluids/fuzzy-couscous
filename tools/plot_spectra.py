@@ -3,6 +3,10 @@ Plot shell-averaged energy spectra from a blast_les `<run>_spectra.h5`
 file. Overlays multiple times, and optionally splits the solenoidal /
 dilatational components.
 
+With --solenoidal the plot reports both axes of a spectrum: the *energy*
+(magnitude, via the K_dil/K_tot fraction annotated per time) and the
+*turbulence* (spectral shape, via a local-slope panel d log E / d log k).
+
 Usage:
     python tools/plot_spectra.py <spectra.h5> -o <out.png>
         [--solenoidal] [--steps STEPS] [--reference-slope -5/3]
@@ -11,42 +15,21 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
-import h5py
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-
-def list_steps(path: Path) -> list[tuple[int, float]]:
-    out = []
-    with h5py.File(path, "r") as f:
-        for name in f.keys():
-            m = re.match(r"step_(\d+)", name)
-            if not m:
-                continue
-            step = int(m.group(1))
-            t = float(f[name]["time"][0])
-            out.append((step, t))
-    out.sort()
-    return out
-
-
-def load_step(path: Path, step: int) -> dict[str, np.ndarray]:
-    with h5py.File(path, "r") as f:
-        g = f[f"step_{step:06d}"]
-        return {
-            "k": g["k"][...],
-            "E_total": g["E_total"][...],
-            "E_sol":   g["E_sol"][...],
-            "E_dil":   g["E_dil"][...],
-            "time":    float(g["time"][0]),
-        }
+# Shared spectrum-shape helpers (this script lives in tools/, so spectrum_shape
+# is importable directly).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from spectrum_shape import (  # noqa: E402
+    list_steps, load_step, local_slope, integrated_energy,
+)
 
 
 def main() -> int:
@@ -74,16 +57,32 @@ def main() -> int:
         idx = np.linspace(0, len(available) - 1, n_show).astype(int)
         wanted = [available[i][0] for i in idx]
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    # --solenoidal adds a second panel for the spectral *shape* (turbulence),
+    # alongside the E(k) panel (energy). Without it, a single E(k) panel.
+    if args.solenoidal:
+        fig, (ax, axs) = plt.subplots(1, 2, figsize=(13, 5))
+    else:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        axs = None
+
     cmap = plt.get_cmap("viridis")
     for i, step in enumerate(wanted):
         d = load_step(args.spectra, step)
         c = cmap(i / max(1, len(wanted) - 1))
-        ax.loglog(d["k"][1:], d["E_total"][1:], "-", color=c,
-                  label=f"t={d['time']:.3e}")
+        k = d["k"]
         if args.solenoidal:
-            ax.loglog(d["k"][1:], d["E_sol"][1:], "--", color=c, alpha=0.5)
-            ax.loglog(d["k"][1:], d["E_dil"][1:], ":", color=c, alpha=0.5)
+            # Energy magnitude: annotate the dilatational fraction K_dil/K_tot.
+            frac = integrated_energy(k, d["E_dil"]) / max(
+                integrated_energy(k, d["E_total"]), 1e-30)
+            label = f"t={d['time']:.3e} ($K_{{dil}}/K_{{tot}}$={frac:.2f})"
+            ax.loglog(k[1:], d["E_sol"][1:], "--", color=c, alpha=0.5)
+            ax.loglog(k[1:], d["E_dil"][1:], ":", color=c, alpha=0.5)
+            # Turbulence shape: local slope of the total spectrum.
+            kk, sl = local_slope(k, d["E_total"])
+            axs.semilogx(kk, sl, "-", color=c, lw=1.6)
+        else:
+            label = f"t={d['time']:.3e}"
+        ax.loglog(k[1:], d["E_total"][1:], "-", color=c, label=label)
 
     if args.reference_slope and args.reference_slope != "none":
         if "/" in args.reference_slope:
@@ -95,12 +94,25 @@ def main() -> int:
         anchor = 10
         ax.loglog(kk, anchor * (kk / kk[0]) ** slope, "k--", lw=1,
                   label=f"$\\propto k^{{{args.reference_slope}}}$")
+        if axs is not None:
+            axs.axhline(slope, color="k", ls="--", lw=1,
+                        label=f"$k^{{{args.reference_slope}}}$")
 
     ax.set_xlabel("k")
     ax.set_ylabel("E(k)")
-    ax.set_title(f"{args.spectra.name}")
+    ax.set_title(f"energy: {args.spectra.name}\n(solid total, -- sol, : dil)"
+                 if args.solenoidal else f"{args.spectra.name}")
     ax.legend(fontsize=8, loc="lower left")
     ax.grid(True, which="both", alpha=0.3)
+
+    if axs is not None:
+        axs.set_xlabel("k")
+        axs.set_ylabel(r"local slope $d\log E_{tot}/d\log k$")
+        axs.set_title("turbulence: total spectral slope")
+        axs.set_ylim(-4, 3)
+        axs.legend(fontsize=8, loc="upper right")
+        axs.grid(True, which="both", alpha=0.3)
+
     fig.tight_layout()
     fig.savefig(args.out, dpi=120)
     print(f"wrote {args.out}")

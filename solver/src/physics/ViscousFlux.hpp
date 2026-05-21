@@ -58,6 +58,11 @@ struct ViscousParams {
     // where D^2 is the (grid-scaled) 2nd difference and h the cell size.
     // Disabled by default; the existing WENO/Ducros path is untouched.
     bool abv_enabled      = false;
+    // Sensor derivative order r (Cook/Kawai-Lele). r=4 is canonical (more
+    // scale-selective: smooth-flow LAD vanishes as Δ^{r+2}); r=2 is the
+    // reduced variant. Both fit NGHOST=6 (the r-th difference of theta uses a
+    // radius-r/2 stencil on theta, which is itself a radius-3 derivative of u).
+    int  abv_r            = 4;
     Real abv_cbeta        = 1.0;     // C_beta  (bulk)
     Real abv_cmu          = 0.002;   // C_mu    (shear)
     Real abv_ckappa       = 0.01;    // C_kappa (thermal)

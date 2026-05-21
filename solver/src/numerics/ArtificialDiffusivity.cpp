@@ -10,13 +10,25 @@ namespace blast {
 
 namespace {
 
-// Finite-safe raw 2nd difference (4th-order stencil, inv_dx2 = 1 so the result
-// is ~ dx^2 d^2 f/dx^2). Unfilled edge/corner ghost cells (apply_bcs fills only
-// face ghosts) hold garbage, so any non-finite stencil value is treated as 0.
-// This keeps the LAD sensor finite everywhere; interior cells more than two
-// cells from a boundary read only valid data and are unaffected.
-inline Real d2_raw_safe(const Real* p, Index s) {
+// Finite-safe raw r-th difference (inv = 1, so the result is the grid-scaled
+// derivative ~ dx^r d^r f/dx^r, units of f). Unfilled edge/corner ghost cells
+// (apply_bcs fills only face ghosts) hold garbage, so any non-finite stencil
+// value is treated as 0. Interior cells more than r/2 cells from a boundary
+// read only valid data and are unaffected.
+//
+//   r = 2: 4th-order 2nd difference, 5-point (-1,16,-30,16,-1)/12 (radius 2)
+//   r = 4: 2nd-order 4th difference, 5-point (1,-4,6,-4,1)        (radius 2)
+//
+// The canonical Cook/Kawai-Lele sensor uses r = 4 (more scale-selective). Both
+// fit NGHOST=6: theta/strain are radius-3 derivatives of u (valid on [-3,n+3)),
+// and a radius-2 r-th difference of those lands on [-1,n+1) -- exactly the band
+// the compact divergence needs.
+inline Real dr_raw_safe(const Real* p, Index s, int r) {
     auto z = [](Real x) { return std::isfinite(x) ? x : 0.0; };
+    if (r == 4) {
+        return z(p[2 * s]) - 4.0 * z(p[s]) + 6.0 * z(p[0])
+             - 4.0 * z(p[-s]) + z(p[-2 * s]);
+    }
     return (-1.0 * (z(p[2 * s]) + z(p[-2 * s]))
             + 16.0 * (z(p[s]) + z(p[-s]))
             - 30.0 * z(p[0])) / 12.0;
@@ -67,11 +79,12 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
             }
 
     // ---- Step 2: LAD coefficient fields on [-1, n+1) ---------------------
-    auto d2mag = [&](const Field3D& f, int i, int j, int k) -> Real {
+    const int r = (vp.abv_r == 4) ? 4 : 2;
+    auto drmag = [&](const Field3D& f, int i, int j, int k) -> Real {
         const Real* p = &f(i, j, k);
-        Real m = d2_raw_safe(p, 1); m *= m;
-        if (ny > 1) { const Real s = d2_raw_safe(p, f.ldx());  m += s * s; }
-        if (nz > 1) { const Real s = d2_raw_safe(p, f.ldxy()); m += s * s; }
+        Real s = dr_raw_safe(p, 1, r); Real m = s * s;
+        if (ny > 1) { s = dr_raw_safe(p, f.ldx(),  r); m += s * s; }
+        if (nz > 1) { s = dr_raw_safe(p, f.ldxy(), r); m += s * s; }
         return std::sqrt(m);
     };
 
@@ -99,10 +112,10 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                 if (!std::isfinite(r) || r <= 0.0 || !std::isfinite(T) || T <= 0.0)
                     continue;
 
-                const Real Mth  = d2mag(theta_src, i, j, k);
-                const Real MS   = d2mag(strain_src, i, j, k);
-                const Real MT   = d2mag(primT, i, j, k);
-                const Real Mrho = d2mag(rho, i, j, k);
+                const Real Mth  = drmag(theta_src, i, j, k);
+                const Real MS   = drmag(strain_src, i, j, k);
+                const Real MT   = drmag(primT, i, j, k);
+                const Real Mrho = drmag(rho, i, j, k);
 
                 const Real th  = theta_src(i, j, k);
                 const Real fsw = (std::isfinite(th) && th < 0.0) ? 1.0 : 0.0;

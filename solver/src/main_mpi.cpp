@@ -141,6 +141,7 @@ int main(int argc, char** argv) {
     ViscousParams vp = to_viscous(c.physics, c.bc);
     // Localized artificial diffusivity (LAD), configured via the [afp] block.
     vp.abv_enabled      = c.afp.enabled;
+    vp.abv_r            = c.afp.r_order;
     vp.abv_cbeta        = c.afp.C_beta;
     vp.abv_cmu          = c.afp.C_mu;
     vp.abv_ckappa       = c.afp.C_kappa;

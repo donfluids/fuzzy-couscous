@@ -28,9 +28,11 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parent.parent
-STATS = ROOT / "out_blast_128_slip_hyper6_fd_long" / \
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
+STATS = RUNS / "out_blast_128_slip_hyper6_fd_long" / \
         "blast_128_slip_hyper6_fd_long_stats.csv"
-LOG_FILE = ROOT / "run_blast_128_slip_hyper6_fd_long.log"
+LOG_FILE = DATA / "run_blast_128_slip_hyper6_fd_long.log"
 
 
 def parse_kdksol_from_log(path):

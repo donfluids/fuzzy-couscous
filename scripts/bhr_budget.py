@@ -35,12 +35,13 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 GAMMA = 1.4
 MU = 5.0e-4         # physical viscosity (matches blast_128_budget_*.toml)
 NU6 = 2.5e-14       # hyperdissipation coefficient
 
 SEEDS = [1, 2, 3, 4, 5]
-RUN_DIR = lambda s: ROOT / f"out_blast_128_budget_seed{s}"
+RUN_DIR = lambda s: RUNS / f"out_blast_128_budget_seed{s}"
 RUN_NAME = lambda s: f"blast_128_budget_seed{s}"
 
 

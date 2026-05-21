@@ -55,6 +55,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
 
 # Physics / grid (matches blast_128_budget_*.toml).
 MU = 5.0e-4          # constant physical viscosity
@@ -65,7 +67,7 @@ X0 = -0.5
 DX = L / N
 
 SEEDS = [1, 2, 3, 4, 5]
-RUN_DIR = lambda s: ROOT / f"out_blast_128_budget_seed{s}"
+RUN_DIR = lambda s: RUNS / f"out_blast_128_budget_seed{s}"
 RUN_NAME = lambda s: f"blast_128_budget_seed{s}"
 
 # Sensor defaults.
@@ -400,7 +402,7 @@ def main():
     print(f"wrote {f3}")
 
     # ------------------------------------------------------------------ npz
-    out = ROOT / "resolution_sensor.npz"
+    out = DATA / "resolution_sensor.npz"
     np.savez(out,
              t_map=t, step_map=step, seed=args.seed,
              n_cells=args.n_cells, C2=args.C2,

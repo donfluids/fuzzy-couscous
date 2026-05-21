@@ -33,6 +33,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 spec = importlib.util.spec_from_file_location("bb", ROOT / "scripts" / "bhr_budget.py")
 bb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bb)
@@ -165,7 +166,7 @@ def main():
     out = ROOT / "figs" / "bhr_ab_budget.png"
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"\nwrote {out}")
-    np.savez(ROOT / "bhr_ab_budget.npz", t=t, ar_int=ar_int, b_int=b_int,
+    np.savez(DATA / "bhr_ab_budget.npz", t=t, ar_int=ar_int, b_int=b_int,
              P_baro=Pbaro, P_Rey=PRey, P_shear=Pshear, P_b=Pb,
              dadt=dadt, dbdt=dbdt)
     return 0

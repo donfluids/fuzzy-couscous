@@ -24,6 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 
 spec = importlib.util.spec_from_file_location("bhr1d", ROOT / "scripts" / "bhr_rans_1d.py")
 bhr1d = importlib.util.module_from_spec(spec)
@@ -34,7 +35,7 @@ SAVE_T = (0.02, 0.05, 0.10)
 
 
 def dns_peaks():
-    d = np.load(ROOT / "dns_radial_profiles.npz", allow_pickle=True)["profiles"]
+    d = np.load(DATA / "dns_radial_profiles.npz", allow_pickle=True)["profiles"]
     out = {}
     for p in d:
         out[round(float(p["t"]), 2)] = dict(
@@ -50,7 +51,7 @@ def main():
 
     results = {}
     for bs in B_SEEDS:
-        out = ROOT / f"out_bhr_seed{bs}.npz"
+        out = DATA / f"out_bhr_seed{bs}.npz"
         saves, _ = bhr1d.run(n=400, tend=0.10, use_bhr=True, b_seed=bs,
                              save_times=SAVE_T, out=str(out))
         peaks = {}

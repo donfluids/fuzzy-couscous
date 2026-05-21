@@ -19,20 +19,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 SEEDS = [1, 2, 3, 4, 5]
 WIN = (0.15, 0.5)
 
 
 def stats(s):
     t, KE = [], []
-    p = ROOT / f"out_blast_128_budget_seed{s}" / f"blast_128_budget_seed{s}_stats.csv"
+    p = RUNS / f"out_blast_128_budget_seed{s}" / f"blast_128_budget_seed{s}_stats.csv"
     for r in csv.DictReader(open(p)):
         t.append(float(r["time"])); KE.append(float(r["KE"]))
     return np.array(t), np.array(KE)
 
 
 def spec(s):
-    f = h5py.File(ROOT / f"out_blast_128_budget_seed{s}" / f"blast_128_budget_seed{s}_spectra.h5", "r")
+    f = h5py.File(RUNS / f"out_blast_128_budget_seed{s}" / f"blast_128_budget_seed{s}_spectra.h5", "r")
     t, ks, kd = [], [], []
     for key in f.keys():
         g = f[key]; t.append(float(g["time"][0]))

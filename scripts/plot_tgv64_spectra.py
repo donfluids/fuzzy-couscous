@@ -82,8 +82,8 @@ def main():
     def plot_one(ax, t_chooser, title):
         amp_anchor = None
         for label, out_dir, spec_name, stats_name, color in RUNS:
-            spec_path = ROOT / out_dir / spec_name
-            stats_path = ROOT / out_dir / stats_name
+            spec_path = ROOT / "runs" / out_dir / spec_name
+            stats_path = ROOT / "runs" / out_dir / stats_name
             if not spec_path.exists():
                 print(f"missing: {spec_path}", file=sys.stderr)
                 continue

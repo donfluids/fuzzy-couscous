@@ -23,7 +23,8 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parent.parent
-RUN_DIR = ROOT / "out_blast_128_slip_hyper6_fd"
+RUNS = ROOT / "runs"
+RUN_DIR = RUNS / "out_blast_128_slip_hyper6_fd"
 STATS_PATH = RUN_DIR / "blast_128_slip_hyper6_fd_stats.csv"
 SPECTRA_PATH = RUN_DIR / "blast_128_slip_hyper6_fd_spectra.h5"
 FIGS_DIR = ROOT / "figs"

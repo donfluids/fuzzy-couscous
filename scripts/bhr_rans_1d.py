@@ -421,7 +421,7 @@ if __name__ == "__main__":
     ap.add_argument("--rwall", type=float, default=0.5)
     ap.add_argument("--tend", type=float, default=0.5)
     ap.add_argument("--bhr", type=int, default=1)
-    ap.add_argument("--out", default="out_bhr_rans_1d.npz")
+    ap.add_argument("--out", default="data/out_bhr_rans_1d.npz")
     args = ap.parse_args()
     run(n=args.n, rwall=args.rwall, tend=args.tend,
         use_bhr=bool(args.bhr), out=args.out)

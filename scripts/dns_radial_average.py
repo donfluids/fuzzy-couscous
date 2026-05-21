@@ -22,8 +22,10 @@ import h5py
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
 SEEDS = [1, 2, 3, 4, 5]
-RUN_DIR = lambda s: ROOT / f"out_blast_128_budget_seed{s}"
+RUN_DIR = lambda s: RUNS / f"out_blast_128_budget_seed{s}"
 RUN_NAME = lambda s: f"blast_128_budget_seed{s}"
 
 N = 128
@@ -143,9 +145,9 @@ def main():
               f"k_peak={k.max():.4e} a_peak={np.abs(a_r).max():.4e} "
               f"b_peak={b.max():.4e}")
 
-    np.savez(ROOT / "dns_radial_profiles.npz",
+    np.savez(DATA / "dns_radial_profiles.npz",
              profiles=np.array(profiles, dtype=object))
-    print(f"Wrote {ROOT / 'dns_radial_profiles.npz'} ({len(profiles)} times)")
+    print(f"Wrote {DATA / 'dns_radial_profiles.npz'} ({len(profiles)} times)")
 
 
 if __name__ == "__main__":

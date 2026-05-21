@@ -11,13 +11,14 @@ import numpy as np
 
 import importlib.util
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 spec = importlib.util.spec_from_file_location(
     "bhr1d", ROOT / "scripts" / "bhr_rans_1d.py")
 bhr1d = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bhr1d)
 
 # DNS targets at t~0.05 (from dns_radial_average.py output).
-dns = np.load(ROOT / "dns_radial_profiles.npz", allow_pickle=True)
+dns = np.load(DATA / "dns_radial_profiles.npz", allow_pickle=True)
 dns_profiles = list(dns["profiles"])
 dref = min(dns_profiles, key=lambda p: abs(float(p["t"]) - 0.05))
 dns_k = float(np.max(dref["k"]))
@@ -40,7 +41,7 @@ CONFIGS = [
 
 
 def score(cfg):
-    out = ROOT / f"out_cal_{cfg['name']}.npz"
+    out = DATA / f"out_cal_{cfg['name']}.npz"
     saves, ke = bhr1d.run(
         n=300, rwall=0.5, tend=0.12, use_bhr=True,
         feedback=cfg["feedback"], c_mu=cfg["c_mu"], c_a=cfg["c_a"],

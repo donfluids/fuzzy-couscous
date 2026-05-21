@@ -31,6 +31,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 RUNROOT = ROOT / "solver"   # blast_les writes out_dir relative to solver/
 NB = 3  # trim border cells (one-sided FD / slip-wall artefacts)
 
@@ -138,7 +139,7 @@ def main():
     out.parent.mkdir(exist_ok=True)
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"wrote {out}")
-    np.savez(ROOT / "compare_multifluid_singlegas.npz",
+    np.savez(DATA / "compare_multifluid_singlegas.npz",
              **{f"{lab.split()[0]}_{k}": v for lab, r in res.items() for k, v in r.items()})
     return 0
 

@@ -43,7 +43,7 @@ RUNS = [
 
 def load_ckpt(out_dir):
     name = out_dir.replace("out_", "")
-    ckpt = ROOT / out_dir / f"{name}.ckpt.h5"
+    ckpt = ROOT / "runs" / out_dir / f"{name}.ckpt.h5"
     with h5py.File(ckpt, "r") as f:
         rho  = np.array(f["rho"],   dtype=np.float64)
         rhou = np.array(f["rho_u"], dtype=np.float64)

@@ -16,7 +16,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
-RUN = ROOT / "out_blast_128_bhr"
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
+RUN = RUNS / "out_blast_128_bhr"
 TARGETS = [0.05, 0.10]
 
 
@@ -39,10 +41,10 @@ def main():
     if not bhr3d:
         print("no 3D BHR profiles found (run blast_128_bhr.toml first)", file=sys.stderr)
         return 1
-    dns = np.load(ROOT / "dns_radial_profiles.npz", allow_pickle=True)["profiles"]
+    dns = np.load(DATA / "dns_radial_profiles.npz", allow_pickle=True)["profiles"]
     dns_by_t = {round(float(p["t"]), 2): p for p in dns}
     rans1d = None
-    p1 = ROOT / "out_rans_bhr.npz"
+    p1 = DATA / "out_rans_bhr.npz"
     if p1.exists():
         rans1d = list(np.load(p1, allow_pickle=True)["saves"])
 

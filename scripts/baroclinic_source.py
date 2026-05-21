@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 NB = 3
 
 
@@ -106,7 +107,7 @@ def main():
     fig.tight_layout()
     out = ROOT / "figs" / f"baroclinic_source_{args.case}.png"
     fig.savefig(out, dpi=140, bbox_inches="tight"); print(f"wrote {out}")
-    np.savez(ROOT / f"baroclinic_source_{args.case}.npz", t=t, baroclinic=B,
+    np.savez(DATA / f"baroclinic_source_{args.case}.npz", t=t, baroclinic=B,
              enstrophy=Ens, sk_t=sk_t, K_sol=Ksol_s, K_dil=Kdil_s)
     return 0
 

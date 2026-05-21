@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 
 
 def load_spectra(h5path):
@@ -62,8 +63,8 @@ def runs_for(N):
 
 def plot_panel(ax, runs, title, k_xmax):
     for label, out_dir, spec_name, stats_name, color in runs:
-        spec_path = ROOT / out_dir / spec_name
-        stats_path = ROOT / out_dir / stats_name
+        spec_path = RUNS / out_dir / spec_name
+        stats_path = RUNS / out_dir / stats_name
         if not spec_path.exists():
             print(f"missing: {spec_path}", file=sys.stderr)
             continue
@@ -78,10 +79,10 @@ def plot_panel(ax, runs, title, k_xmax):
     # Horizontal -5/3 reference would be a single constant; pick a
     # representative value from k=5 region of the first available run.
     for _, out_dir, spec_name, stats_name, _ in runs:
-        spec_path = ROOT / out_dir / spec_name
+        spec_path = RUNS / out_dir / spec_name
         if spec_path.exists():
             times, k, E = load_spectra(spec_path)
-            t_target = peak_dissipation_time(ROOT / out_dir / stats_name)
+            t_target = peak_dissipation_time(RUNS / out_dir / stats_name)
             idx = int(np.argmin(np.abs(times - t_target)))
             idx_k = int(np.argmin(np.abs(k - 5.0)))
             ref = E[idx, idx_k] * (5.0 ** (5.0 / 3.0))

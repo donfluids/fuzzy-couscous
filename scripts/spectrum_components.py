@@ -26,10 +26,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 
 
 def spectra_path(tag, seed):
-    return ROOT / f"out_blast_128_{tag}_seed{seed}" / f"blast_128_{tag}_seed{seed}_spectra.h5"
+    return RUNS / f"out_blast_128_{tag}_seed{seed}" / f"blast_128_{tag}_seed{seed}_spectra.h5"
 
 
 def tavg(path, win):

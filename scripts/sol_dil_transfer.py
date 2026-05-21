@@ -39,6 +39,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 N = 128
 L = 1.0
 DX = L / N
@@ -171,9 +172,9 @@ def main():
     out = ROOT / "figs" / "sol_dil_transfer.png"
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"\nwrote {out}")
-    np.savez(ROOT / "sol_dil_transfer.npz", t=t, K_sol=Ksol, K_dil=Kdil,
+    np.savez(DATA / "sol_dil_transfer.npz", t=t, K_sol=Ksol, K_dil=Kdil,
              baroclinic=Baro, Sigma_d_to_s=Sds, Sigma_s_to_d=Ssd)
-    print(f"wrote {ROOT/'sol_dil_transfer.npz'}")
+    print(f"wrote {DATA/'sol_dil_transfer.npz'}")
     return 0
 
 

@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intermode_transfer import ddx, load_xyz, helmholtz, kbin, nbin, kphys  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
 TARGET_TIMES = [0.03, 0.05, 0.08, 0.10]
 KFIT = (8, 40)
 
@@ -38,10 +40,10 @@ def case_runs(case):
     if case == "128":
         runs = [(f"out_blast_128_budget_seed{s}", f"blast_128_budget_seed{s}")
                 for s in (1, 2, 3, 4, 5)]
-        spec = ROOT / "out_blast_128_budget_seed1" / "blast_128_budget_seed1_spectra.h5"
+        spec = RUNS / "out_blast_128_budget_seed1" / "blast_128_budget_seed1_spectra.h5"
     elif case == "256":
         runs = [("out_blast_256_match128", "blast_256_match128")]
-        spec = ROOT / "out_blast_256_match128" / "blast_256_match128_spectra.h5"
+        spec = RUNS / "out_blast_256_match128" / "blast_256_match128_spectra.h5"
     else:
         raise SystemExit(f"unknown case {case}")
     return runs, spec
@@ -145,7 +147,7 @@ def main():
     fig.tight_layout()
     out = ROOT / "figs" / f"energy_flux_{args.case}.png"
     fig.savefig(out, dpi=140, bbox_inches="tight"); print(f"wrote {out}")
-    np.savez(ROOT / f"energy_flux_{args.case}.npz",
+    np.savez(DATA / f"energy_flux_{args.case}.npz",
              times=[r[0] for r in results], E_sol=[r[1] for r in results],
              Pi_sol=[r[2] for r in results], slope_t=ts, slope=sl,
              onset=onset if onset else -1, N=Nout)

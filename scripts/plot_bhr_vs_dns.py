@@ -18,10 +18,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
 
-rans = np.load(ROOT / "out_rans_bhr.npz", allow_pickle=True)
+rans = np.load(DATA / "out_rans_bhr.npz", allow_pickle=True)
 rans_saves = list(rans["saves"])
-dns = np.load(ROOT / "dns_radial_profiles.npz", allow_pickle=True)
+dns = np.load(DATA / "dns_radial_profiles.npz", allow_pickle=True)
 dns_profiles = list(dns["profiles"])
 
 # Times to compare (use DNS times; match nearest RANS save).
@@ -90,7 +92,7 @@ ax.plot(ke[:, 0], ke[:, 2], "-", color="tab:orange", lw=1.8, label="RANS TKE (tu
 # DNS volume-integrated KE / TKE from the budget npz times (approx).
 import csv
 dt, dKE = [], []
-with open(ROOT / "out_blast_128_budget_seed1" /
+with open(RUNS / "out_blast_128_budget_seed1" /
           "blast_128_budget_seed1_stats.csv") as f:
     for row in csv.DictReader(f):
         dt.append(float(row["time"])); dKE.append(float(row["KE"]))

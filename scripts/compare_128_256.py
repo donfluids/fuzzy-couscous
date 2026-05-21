@@ -21,8 +21,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = {"128": ROOT / "out_blast_128_budget_seed1" / "blast_128_budget_seed1_spectra.h5",
-        "256": ROOT / "out_blast_256_match128" / "blast_256_match128_spectra.h5"}
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
+SPEC = {"128": RUNS / "out_blast_128_budget_seed1" / "blast_128_budget_seed1_spectra.h5",
+        "256": RUNS / "out_blast_256_match128" / "blast_256_match128_spectra.h5"}
 COL = {"128": "tab:blue", "256": "tab:red"}
 
 
@@ -41,7 +43,7 @@ def ksol_kdil(spec):
 def main():
     ef = {}; sb = {}
     for c in ("128", "256"):
-        fe = ROOT / f"energy_flux_{c}.npz"; fs = ROOT / f"sol_energy_budget_{c}.npz"
+        fe = DATA / f"energy_flux_{c}.npz"; fs = DATA / f"sol_energy_budget_{c}.npz"
         if fe.exists(): ef[c] = np.load(fe, allow_pickle=True)
         if fs.exists(): sb[c] = np.load(fs, allow_pickle=True)
     if not ef or not sb:

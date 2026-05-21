@@ -36,6 +36,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 
 # ---- N-agnostic FFT grids (cached per resolution) -------------------------
 _CACHE = {}
@@ -170,7 +171,7 @@ def main():
     out = ROOT / "figs" / f"intermode_transfer_{label}.png"
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"wrote {out}")
-    np.savez(ROOT / f"intermode_transfer_{label}.npz", k=k, T_d_to_s=Tds,
+    np.savez(DATA / f"intermode_transfer_{label}.npz", k=k, T_d_to_s=Tds,
              T_s_to_d=Tsd, Sigma_d_to_s=Sds, Sigma_s_to_d=Ssd,
              K_sol=Ksol, K_dil=Kdil, N=N)
     return 0

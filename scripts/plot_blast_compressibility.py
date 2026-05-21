@@ -21,12 +21,13 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
 
 # Use the longer-integration run when available -- it has the cleanest
 # late-time behaviour.
-LONG = ROOT / "out_blast_128_slip_hyper6_fd_long" / \
+LONG = RUNS / "out_blast_128_slip_hyper6_fd_long" / \
        "blast_128_slip_hyper6_fd_long_stats.csv"
-SHORT = ROOT / "out_blast_128_slip_hyper6_fd" / \
+SHORT = RUNS / "out_blast_128_slip_hyper6_fd" / \
         "blast_128_slip_hyper6_fd_stats.csv"
 
 

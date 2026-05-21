@@ -46,6 +46,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
+DATA = ROOT / "data"
 
 MU = 5.0e-4
 N = 128
@@ -54,7 +56,7 @@ DX = L_BOX / N
 
 SEEDS = [1, 2, 3, 4, 5]
 TAG = "budget"            # "budget" (t<=0.5) or "early" (dense t<=0.02)
-def RUN_DIR(s): return ROOT / f"out_blast_128_{TAG}_seed{s}"
+def RUN_DIR(s): return RUNS / f"out_blast_128_{TAG}_seed{s}"
 def RUN_NAME(s): return f"blast_128_{TAG}_seed{s}"
 
 C_EPS = 0.5            # dissipation-anomaly constant (eps = C_eps u'^3 / L)
@@ -221,12 +223,12 @@ def main():
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"\nwrote {out}")
 
-    np.savez(ROOT / f"eta_cascade_{TAG}.npz",
+    np.savez(DATA / f"eta_cascade_{TAG}.npz",
              t=tg, eta_sol=eta_sol, eta_tot=eta_tot, eta_visc=eta_visc,
              eta_thru=eta_thru, eta_dx_sol=eta_sol / DX, eta_dx_tot=eta_tot / DX,
              nu=nu, L=L, fsol=fsol, ReL_sol=ReL_sol, ReL_tot=ReL_tot,
              dx=DX, C_eps=args.C_eps, seeds=np.array(use))
-    print(f"wrote {ROOT/('eta_cascade_'+TAG+'.npz')}")
+    print(f"wrote {DATA/('eta_cascade_'+TAG+'.npz')}")
     return 0
 
 

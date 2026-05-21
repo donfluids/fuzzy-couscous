@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intermode_transfer import ddx, load_xyz, helmholtz, kbin, nbin, kphys  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
 MU = 5.0e-4
 WIN = (0.08, 0.10)
 
@@ -109,7 +110,7 @@ def main():
     fig.tight_layout()
     out = ROOT / "figs" / f"sol_energy_budget_{args.case}.png"
     fig.savefig(out, dpi=140, bbox_inches="tight"); print(f"wrote {out}")
-    np.savez(ROOT / f"sol_energy_budget_{args.case}.npz", k=kphys(N), T_s=Ts, Pi=Pi,
+    np.savez(DATA / f"sol_energy_budget_{args.case}.npz", k=kphys(N), T_s=Ts, Pi=Pi,
              E_sol=Es, D_sol=Ds, D_above=Dabove, plateau=plateau, Dtot=Dtot, t=tav, N=N)
     return 0
 

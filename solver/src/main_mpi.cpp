@@ -61,6 +61,12 @@ void apply_ic_local(State& U, const Grid& local_g, const Grid& global_g,
                                                           : 1.5 * local_g.dx()),
                                 c.ic.Y42_amp, xc_g, yc_g, zc_g);
             break;
+        case ICType::GaussianBlast:
+            ic_gaussian_blast_3d(U, local_g, eos, c.ic.blast_energy, c.ic.r0,
+                                 c.ic.rho_0, c.ic.T_0, c.ic.Y42_amp,
+                                 c.ic.ensemble_amp, c.ic.ensemble_seed,
+                                 xc_g, yc_g, zc_g);
+            break;
         case ICType::SodX:
         case ICType::ShuOsherX:
         case ICType::Sedov:

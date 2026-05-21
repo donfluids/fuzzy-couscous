@@ -67,6 +67,27 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
                         Real y_center = std::numeric_limits<Real>::quiet_NaN(),
                         Real z_center = std::numeric_limits<Real>::quiet_NaN());
 
+// Energy-conserving Gaussian blast: deposit a total internal energy `E_total`
+// into a C-infinity Gaussian profile of width `sigma` on a quiescent, uniform-
+// density ambient (rho_ambient, T_ambient), u = 0:
+//
+//   (rho e)(r) = p_ambient/(gamma-1) + A exp(-r^2 / 2 sigma^2),
+//   A = E_total / (2 pi sigma^2)^{3/2}   ->   integral of the bump = E_total.
+//
+// The blast shock forms self-consistently from the smooth pressure gradient
+// (no imposed discontinuity, no density contact), so the high-order central +
+// artificial-diffusivity scheme has nothing to overshoot on -- a theoretically
+// grounded, fully smooth replacement for the tanh hot-sphere. `Y42_amp` and the
+// ensemble perturbation modulate the deposited energy angularly (seed for
+// turbulence); their angular mean is ~0 so E_total is preserved.
+void ic_gaussian_blast_3d(State& U, const Grid& g, const IdealGas& eos,
+                          Real E_total, Real sigma,
+                          Real rho_ambient, Real T_ambient, Real Y42_amp,
+                          Real ensemble_amp = 0.0, int ensemble_seed = 0,
+                          Real x_center = std::numeric_limits<Real>::quiet_NaN(),
+                          Real y_center = std::numeric_limits<Real>::quiet_NaN(),
+                          Real z_center = std::numeric_limits<Real>::quiet_NaN());
+
 // Chapman-Jouguet detonation initial condition (addresses reviewer M9).
 // At t=0 a spherical region of radius `r_cj` contains gas in the CJ state
 // behind a strong detonation wave traveling outward with detonation velocity

@@ -12,7 +12,7 @@ enum class BCType { Periodic, SlipWall, Outflow };
 
 enum class ICType {
     SodX, ShuOsherX, Sedov, TaylorGreen, CBC,
-    TopHatSphere, SmoothSphere, CJDetonation
+    TopHatSphere, SmoothSphere, CJDetonation, GaussianBlast
 };
 
 struct PhysicsConfig {
@@ -89,6 +89,9 @@ struct ICParams {
     Real r0       = 0.0;
     Real rho_B    = 1.0;
     Real T_B      = 1.0;
+    // Gaussian blast: total deposited energy E_B; the Gaussian width sigma
+    // reuses r0. blast_energy <= 0 is invalid for type "gaussian_blast".
+    Real blast_energy = 0.0;
     Real rho_0    = 1.0;
     Real T_0      = 1.0;
     Real Y42_amp  = 0.0;

@@ -20,6 +20,7 @@ add_executable(unit_tests
     test_rogallo.cpp
     test_forcing.cpp
     test_abv.cpp
+    test_gaussian_blast.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

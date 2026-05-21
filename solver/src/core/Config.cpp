@@ -32,6 +32,7 @@ ICType parse_ic(std::string_view s) {
     if (s == "tophat_sphere")  return ICType::TopHatSphere;
     if (s == "smooth_sphere")  return ICType::SmoothSphere;
     if (s == "cj_detonation")  return ICType::CJDetonation;
+    if (s == "gaussian_blast") return ICType::GaussianBlast;
     throw std::invalid_argument("Unknown IC: " + std::string(s));
 }
 
@@ -77,6 +78,7 @@ Config load_config(const std::string& path) {
     if (auto s = ic["type"].value<std::string>()) c.ic.type = parse_ic(*s);
     c.ic.r0      = pick<double>(ic["r0"],      c.ic.r0);
     c.ic.rho_B   = pick<double>(ic["rho_B"],   c.ic.rho_B);
+    c.ic.blast_energy = pick<double>(ic["blast_energy"], c.ic.blast_energy);
     c.ic.T_B     = pick<double>(ic["T_B"],     c.ic.T_B);
     c.ic.rho_0   = pick<double>(ic["rho_0"],   c.ic.rho_0);
     c.ic.T_0     = pick<double>(ic["T_0"],     c.ic.T_0);

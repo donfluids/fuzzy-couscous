@@ -62,6 +62,11 @@ void apply_ic(State& U, const Grid& g, const IdealGas& eos, const Config& c) {
                                                           : 1.5 * g.dx()),
                                 c.ic.Y42_amp);
             break;
+        case ICType::GaussianBlast:
+            ic_gaussian_blast_3d(U, g, eos, c.ic.blast_energy, c.ic.r0,
+                                 c.ic.rho_0, c.ic.T_0, c.ic.Y42_amp,
+                                 c.ic.ensemble_amp, c.ic.ensemble_seed);
+            break;
         case ICType::CBC:
             BLAST_ERROR("CBC IC not yet implemented in main driver");
             std::exit(1);

@@ -61,6 +61,11 @@ struct ViscousParams {
     Real abv_cbeta        = 1.0;     // C_beta  (bulk)
     Real abv_cmu          = 0.002;   // C_mu    (shear)
     Real abv_ckappa       = 0.01;    // C_kappa (thermal)
+    // Artificial mass/contact diffusivity (Cook 2007 / Kawai-Lele-Mani): smooths
+    // density contacts (rho jump at ~constant u, p) that the bulk/shear/thermal
+    // sensors miss. Applied consistently (mass + u-weighted momentum + KE-weighted
+    // energy) so velocity and pressure are preserved across the contact.
+    Real abv_cD           = 0.01;    // C_D     (mass/contact)
     // When true, the Ducros/WENO shock sensor is suppressed (central6
     // everywhere) so LAD is the sole shock treatment. Only meaningful with
     // abv_enabled.

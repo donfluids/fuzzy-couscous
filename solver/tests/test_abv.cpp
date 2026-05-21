@@ -57,7 +57,7 @@ void set_tanh_velocity(State& U, const Grid& g, const IdealGas& eos, Real amp) {
 }
 
 struct LADFields {
-    Field3D theta, strain, mu, beta, kappa;
+    Field3D theta, strain, mu, beta, kappa, dmass;
     Real nu_max;
 };
 
@@ -68,11 +68,12 @@ LADFields eval_lad(const State& U, const Grid& g, const IdealGas& eos,
     G.allocate(g.nx, g.ny, g.nz, U.ng());
     Field3D pu, pv, pw, pT;
     LADFields f;
-    for (Field3D* p : {&pu, &pv, &pw, &pT, &f.theta, &f.strain, &f.mu, &f.beta, &f.kappa})
+    for (Field3D* p : {&pu, &pv, &pw, &pT, &f.theta, &f.strain, &f.mu, &f.beta,
+                       &f.kappa, &f.dmass})
         p->resize(g.nx, g.ny, g.nz, U.ng());
     compute_cell_gradients(U, g, eos, pu, pv, pw, pT, G);
     f.nu_max = compute_lad_fields(U, g, eos, vp, G, pT,
-                                  f.theta, f.strain, f.mu, f.beta, f.kappa);
+                                  f.theta, f.strain, f.mu, f.beta, f.kappa, f.dmass);
     return f;
 }
 
@@ -166,6 +167,41 @@ TEST(ABV, NegligibleInSmoothFlow) {
     EXPECT_LT(beta_max, 0.05 * scale) << "LAD must be negligible in smooth flow";
 }
 
+// A stationary density contact (rho jump at u=0, p=1) fires the artificial MASS
+// diffusivity but not the bulk/shear sensors (div u = 0, strain = 0). This is
+// the gap that pure bulk/shear/thermal LAD misses.
+TEST(ABV, MassDiffusivityLocalizesAtContact) {
+    Grid g = thin_grid(64);
+    IdealGas eos{GammaLaw{}};
+    State U(g.nx, g.ny, g.nz);
+    const Real xc = 0.5, delta = 2.0 * g.dx();
+    for (int k = 0; k < g.nz; ++k)
+        for (int j = 0; j < g.ny; ++j)
+            for (int i = 0; i < g.nx; ++i) {
+                const Real rho = 1.5 + 0.5 * std::tanh((g.xc(i) - xc) / delta);  // 1->2
+                U[RHO](i, j, k)  = rho;
+                U[RHOU](i, j, k) = 0.0;   // u = 0  -> div u = 0, strain = 0
+                U[RHOV](i, j, k) = 0.0;
+                U[RHOW](i, j, k) = 0.0;
+                U[RHOE](i, j, k) = 1.0 / (eos.eos.gamma - 1.0);   // p = 1 uniform
+            }
+    BCSet bc = shock_bc();
+    apply_bcs(U, bc);
+
+    LADFields f = eval_lad(U, g, eos, lad_params());
+    const int jc = g.ny / 2, kc = g.nz / 2, ic = g.nx / 2;
+
+    Real d_peak = 0.0, beta_peak = 0.0;
+    for (int i = ic - 3; i <= ic + 3; ++i) {
+        d_peak    = std::max(d_peak,    f.dmass(i, jc, kc));
+        beta_peak = std::max(beta_peak, f.beta(i, jc, kc));
+    }
+    const Real d_tail = f.dmass(4, jc, kc);
+    EXPECT_GT(d_peak, 0.0) << "mass diffusivity should fire at the contact";
+    EXPECT_LT(d_tail, 1e-3 * d_peak) << "should vanish away from the contact";
+    EXPECT_NEAR(beta_peak, 0.0, 1e-30) << "bulk sensor must not fire at a u=0 contact";
+}
+
 namespace {
 
 // A finite-amplitude acoustic wave on a fully periodic box steepens into a
@@ -174,7 +210,8 @@ namespace {
 // isolates LAD's shock-capturing behaviour. The actual production target
 // (slip-wall blast) likewise fills corners; outflow-BC viscous runs are a
 // separate, pre-existing limitation of the gradient pass.
-Real run_periodic_steepening(bool abv_on, bool disable_weno, Real cbeta, Real cmu, Real ckappa, Real dtfac) {
+Real run_periodic_steepening(bool abv_on, bool disable_weno, Real cbeta, Real cmu,
+                             Real ckappa, Real cD, Real dtfac) {
     Grid g;
     g.nx = 64; g.ny = 4; g.nz = 4;
     g.lx = 1.0; g.ly = g.lx / g.nx * g.ny; g.lz = g.ly;
@@ -198,7 +235,7 @@ Real run_periodic_steepening(bool abv_on, bool disable_weno, Real cbeta, Real cm
     ViscousParams vp = lad_params();
     vp.abv_enabled = abv_on;
     vp.abv_disable_weno = disable_weno;
-    vp.abv_cbeta = cbeta; vp.abv_cmu = cmu; vp.abv_ckappa = ckappa;
+    vp.abv_cbeta = cbeta; vp.abv_cmu = cmu; vp.abv_ckappa = ckappa; vp.abv_cD = cD;
     const Real t_end = 0.3;
     const Real dxm = std::min({g.dx(), g.dy(), g.dz()});
 
@@ -231,8 +268,8 @@ Real run_periodic_steepening(bool abv_on, bool disable_weno, Real cbeta, Real cm
 // With zero coefficients, enabling LAD must be a no-op: identical result to the
 // pure hybrid scheme (guards against the artificial path corrupting anything).
 TEST(ABV, ZeroCoeffIsNoOp) {
-    const Real weno = run_periodic_steepening(false, false, 0, 0, 0, 0.25);
-    const Real lad0 = run_periodic_steepening(true, false, 0, 0, 0, 0.25);
+    const Real weno = run_periodic_steepening(false, false, 0, 0, 0, 0, 0.25);
+    const Real lad0 = run_periodic_steepening(true, false, 0, 0, 0, 0, 0.25);
     EXPECT_GT(weno, 0.0);
     EXPECT_DOUBLE_EQ(weno, lad0) << "zero-coefficient LAD changed the solution";
 }
@@ -240,7 +277,7 @@ TEST(ABV, ZeroCoeffIsNoOp) {
 // LAD added to the hybrid central/WENO scheme must stay stable and positive
 // through shock formation (the default-safe configuration).
 TEST(ABV, PeriodicShockLADAdditive) {
-    const Real rho_min = run_periodic_steepening(true, false, 1.0, 0.002, 0.01, 0.25);
+    const Real rho_min = run_periodic_steepening(true, false, 1.0, 0.002, 0.01, 0.01, 0.25);
     EXPECT_GT(rho_min, 0.0) << "LAD additive to WENO went non-finite / negative";
 }
 
@@ -248,8 +285,66 @@ TEST(ABV, PeriodicShockLADAdditive) {
 // must capture the self-steepening shock without blowing up. This is the
 // "replace WENO with a controlled dissipation" demonstration.
 TEST(ABV, PeriodicShockLADOnly) {
-    const Real rho_min = run_periodic_steepening(true, true, 1.0, 0.002, 0.01, 0.25);
+    const Real rho_min = run_periodic_steepening(true, true, 1.0, 0.002, 0.01, 0.01, 0.25);
     EXPECT_GT(rho_min, 0.0)
         << "LAD-only failed to keep the steepening shock finite and positive";
+}
+
+// A density contact (top-hat in rho) advected at uniform u, p with LAD-only.
+// The consistent artificial mass diffusion must smooth the density while keeping
+// the velocity and PRESSURE uniform -- no spurious acoustic waves -- and density
+// positive. This is the piece pure bulk/shear/thermal LAD cannot do.
+TEST(ABV, ContactAdvectionPreservesPressure) {
+    Grid g;
+    g.nx = 128; g.ny = 4; g.nz = 4;
+    g.lx = 1.0; g.ly = g.lx / g.nx * g.ny; g.lz = g.ly;
+    g.x0 = 0.0; g.y0 = 0.0; g.z0 = 0.0;
+    IdealGas eos{GammaLaw{}};
+    State U(g.nx, g.ny, g.nz);
+    const Real u0 = 1.0, p0 = 1.0, d = 3.0 * g.dx();
+    for (int k = 0; k < g.nz; ++k)
+        for (int j = 0; j < g.ny; ++j)
+            for (int i = 0; i < g.nx; ++i) {
+                const Real x = g.xc(i);
+                const Real rho = 1.0 + 0.5 * (std::tanh((x - 0.3) / d)
+                                            - std::tanh((x - 0.7) / d));  // top hat 1->1.5
+                U[RHO](i, j, k)  = rho;
+                U[RHOU](i, j, k) = rho * u0;
+                U[RHOV](i, j, k) = 0.0;
+                U[RHOW](i, j, k) = 0.0;
+                U[RHOE](i, j, k) = p0 / (eos.eos.gamma - 1.0) + 0.5 * rho * u0 * u0;
+            }
+    BCSet bc;  // periodic
+
+    RK3 driver(g.nx, g.ny, g.nz, U.ng());
+    ViscousParams vp = lad_params();        // disable_weno = true (LAD-only)
+    vp.abv_cD = 0.2;                          // contact diffusivity on
+    const Real t_end = 0.3;                   // ~0.3 of an advective period
+    const Real dxm = std::min({g.dx(), g.dy(), g.dz()});
+    Real t = 0.0; int steps = 0;
+    while (t < t_end && steps < 100000) {
+        Real dt = max_dt_hyperbolic(U, g, eos, 0.4);
+        const Real num = driver.last_abv_nu_max();
+        if (num > 0.0) dt = std::min(dt, 0.25 * dxm * dxm / num);
+        if (t + dt > t_end) dt = t_end - t;
+        driver.step(U, g, bc, eos, vp, dt);
+        t += dt; ++steps;
+    }
+
+    const int jc = g.ny / 2, kc = g.nz / 2;
+    Real rho_min = 1e30, p_dev = 0.0;
+    bool finite = true;
+    for (int i = 0; i < g.nx; ++i) {
+        const Real rho = U[RHO](i, jc, kc);
+        const Real u = U[RHOU](i, jc, kc) / rho;
+        const Real p = eos.pressure(rho, U[RHOE](i, jc, kc) - 0.5 * rho * u * u);
+        if (!std::isfinite(rho) || !std::isfinite(p)) finite = false;
+        rho_min = std::min(rho_min, rho);
+        p_dev = std::max(p_dev, std::fabs(p - p0));
+    }
+    EXPECT_TRUE(finite);
+    EXPECT_GT(rho_min, 0.0) << "contact advection produced non-positive density";
+    EXPECT_LT(p_dev, 0.05 * p0)
+        << "mass diffusion induced spurious pressure (consistency broken)";
 }
 

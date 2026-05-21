@@ -529,7 +529,8 @@ void fill_viscous_flux_dir(const State& U, const CellGradients& G,
 // the band the compact (2nd-order) divergence below needs for interior cells.
 void fill_artificial_flux_dir(const State& U, const CellGradients& G,
                               const Field3D& mu_art, const Field3D& beta_art,
-                              const Field3D& kappa_art, int d, State& Flux) {
+                              const Field3D& kappa_art, const Field3D& d_art,
+                              int d, Real inv_dh, State& Flux) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
     const int lo = -1;
     const int hi_x = nx + 1;
@@ -546,6 +547,10 @@ void fill_artificial_flux_dir(const State& U, const CellGradients& G,
     Field3D& Fw = Flux[RHOW]; Field3D& FE = Flux[RHOE];
     Fr.fill(0.0); Fu.fill(0.0); Fv.fill(0.0); Fw.fill(0.0); FE.fill(0.0);
 
+    const Index srho = (d == 0 ? 1 : (d == 1 ? rho.ldx() : rho.ldxy()));
+    const Real half_inv = 0.5 * inv_dh;
+    auto zsafe = [](Real x) { return std::isfinite(x) ? x : 0.0; };
+
 #pragma omp parallel for collapse(2) schedule(static)
     for (int k = klo; k < hi_z; ++k)
         for (int j = jlo; j < hi_y; ++j)
@@ -561,11 +566,21 @@ void fill_artificial_flux_dir(const State& U, const CellGradients& G,
                 }
                 ViscousFluxVec Gv = artificial_flux(
                     C, mu_art(i, j, k), beta_art(i, j, k), kappa_art(i, j, k), d);
-                Fr(i, j, k) = Gv.f[RHO ];
-                Fu(i, j, k) = Gv.f[RHOU];
-                Fv(i, j, k) = Gv.f[RHOV];
-                Fw(i, j, k) = Gv.f[RHOW];
-                FE(i, j, k) = Gv.f[RHOE];
+
+                // Consistent mass/contact diffusion: J = D_art * d(rho)/dx_d.
+                // Diffusing rho carries momentum at the local velocity and the
+                // local kinetic energy, so u and (internal energy hence) p are
+                // unchanged across a contact -- only rho is smoothed.
+                const Real* rp = &rho(i, j, k);
+                const Real drho = (zsafe(rp[srho]) - zsafe(rp[-srho])) * half_inv;
+                const Real J = d_art(i, j, k) * drho;
+                const Real ke = 0.5 * (C.u * C.u + C.v * C.v + C.w * C.w);
+
+                Fr(i, j, k) = Gv.f[RHO ] + J;
+                Fu(i, j, k) = Gv.f[RHOU] + J * C.u;
+                Fv(i, j, k) = Gv.f[RHOV] + J * C.v;
+                Fw(i, j, k) = Gv.f[RHOW] + J * C.w;
+                FE(i, j, k) = Gv.f[RHOE] + J * ke;
             }
 }
 
@@ -576,8 +591,9 @@ void fill_artificial_flux_dir(const State& U, const CellGradients& G,
 void add_compact_divergence(const State& Flux, int d, Real inv_dh, State& Rhs) {
     const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
     const Real half_inv = 0.5 * inv_dh;
+    // Includes RHO: the artificial mass/contact diffusion has a non-zero mass
+    // flux (the physical viscous flux does not).
     for (int v = 0; v < NCONS; ++v) {
-        if (v == RHO) continue;
         const Field3D& F = Flux[v];
         Field3D&       R = Rhs[v];
         const Index sd = (d == 0 ? 1 : (d == 1 ? F.ldx() : F.ldxy()));
@@ -783,21 +799,22 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
         scratch.abv_nu_max = compute_lad_fields(
             U, g, eos, vp, scratch.G, scratch.prim_T,
             scratch.lad_theta, scratch.lad_strain,
-            scratch.mu_art, scratch.beta_art, scratch.kappa_art);
+            scratch.mu_art, scratch.beta_art, scratch.kappa_art, scratch.d_art);
 
         State& Flux = scratch.Flux_visc;
+        const Real idx = 1.0 / g.dx(), idy = 1.0 / g.dy(), idz = 1.0 / g.dz();
         fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
-                                 scratch.kappa_art, 0, Flux);
-        add_compact_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
+                                 scratch.kappa_art, scratch.d_art, 0, idx, Flux);
+        add_compact_divergence(Flux, 0, idx, Rhs);
         if (U.ny() > 1) {
             fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
-                                     scratch.kappa_art, 1, Flux);
-            add_compact_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
+                                     scratch.kappa_art, scratch.d_art, 1, idy, Flux);
+            add_compact_divergence(Flux, 1, idy, Rhs);
         }
         if (U.nz() > 1) {
             fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
-                                     scratch.kappa_art, 2, Flux);
-            add_compact_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
+                                     scratch.kappa_art, scratch.d_art, 2, idz, Flux);
+            add_compact_divergence(Flux, 2, idz, Rhs);
         }
     }
 

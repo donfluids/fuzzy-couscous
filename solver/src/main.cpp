@@ -132,6 +132,7 @@ int main(int argc, char** argv) {
     vp.abv_cbeta        = c.afp.C_beta;
     vp.abv_cmu          = c.afp.C_mu;
     vp.abv_ckappa       = c.afp.C_kappa;
+    vp.abv_cD           = c.afp.C_D;
     vp.abv_disable_weno = c.afp.disable_weno;
     if (vp.abv_enabled)
         BLAST_INFO("LAD on: C_beta={} C_mu={} C_kappa={} disable_weno={}",

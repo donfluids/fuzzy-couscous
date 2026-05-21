@@ -114,6 +114,7 @@ Config load_config(const std::string& path) {
     c.afp.C_mu    = pick<double>(a["C_mu"], c.afp.C_mu);
     c.afp.C_beta  = pick<double>(a["C_beta"], c.afp.C_beta);
     c.afp.C_kappa = pick<double>(a["C_kappa"], c.afp.C_kappa);
+    c.afp.C_D     = pick<double>(a["C_D"], c.afp.C_D);
     c.afp.disable_weno = pick<bool>(a["disable_weno"], c.afp.disable_weno);
 
     auto t = tbl["time"];

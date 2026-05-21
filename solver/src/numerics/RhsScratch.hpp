@@ -40,6 +40,7 @@ struct RhsScratch {
     Field3D lad_theta;          // div u source (filled on [-3, n+3))
     Field3D lad_strain;         // |S| source   (filled on [-3, n+3))
     Field3D mu_art, beta_art, kappa_art;   // LAD coefficients on [-1, n+1)
+    Field3D d_art;              // artificial mass/contact diffusivity on [-1, n+1)
     bool    abv_allocated = false;
     Real    abv_nu_max    = 0.0;   // max effective LAD diffusivity (for CFL)
 

@@ -34,6 +34,7 @@ void RhsScratch::allocate_abv(int nx, int ny, int nz, int ng) {
     mu_art.resize(nx, ny, nz, ng);
     beta_art.resize(nx, ny, nz, ng);
     kappa_art.resize(nx, ny, nz, ng);
+    d_art.resize(nx, ny, nz, ng);
     abv_allocated = true;
 }
 

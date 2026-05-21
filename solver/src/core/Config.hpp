@@ -42,7 +42,8 @@ struct AFPConfig {
     int  r_order      = 4;
     Real C_mu         = 0.002;   // artificial shear
     Real C_beta       = 1.0;     // artificial bulk (shocks)
-    Real C_kappa      = 0.01;    // artificial thermal conductivity (contacts)
+    Real C_kappa      = 0.01;    // artificial thermal conductivity (entropy/contacts)
+    Real C_D          = 0.01;    // artificial mass diffusivity (density contacts)
     bool disable_weno = false;   // suppress Ducros/WENO so LAD is the sole shock sink
 };
 

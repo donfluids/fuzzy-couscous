@@ -144,6 +144,7 @@ int main(int argc, char** argv) {
     vp.abv_cbeta        = c.afp.C_beta;
     vp.abv_cmu          = c.afp.C_mu;
     vp.abv_ckappa       = c.afp.C_kappa;
+    vp.abv_cD           = c.afp.C_D;
     vp.abv_disable_weno = c.afp.disable_weno;
 
     State U(local_g.nx, local_g.ny, local_g.nz);

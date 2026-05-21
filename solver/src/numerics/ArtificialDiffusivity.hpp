@@ -17,7 +17,13 @@ namespace blast {
 //
 //   beta_art  = C_beta  * rho * H(-div u) * |D^2(div u)| * h^2     (bulk; shocks)
 //   mu_art    = C_mu    * rho *            |D^2 |S||      * h^2     (shear)
-//   kappa_art = C_kappa * (rho c / T) *    |D^2 e|        * h       (thermal; contacts)
+//   kappa_art = C_kappa * (rho c / T) *    |D^2 e|        * h       (thermal; entropy)
+//   d_art     = C_D     * c * (|D^2 rho| / rho)           * h       (mass; contacts)
+//
+// d_art smooths density contacts (rho jump at ~constant u,p) that the
+// dilatation/strain/energy sensors miss; it is applied as a consistent mass
+// diffusion (mass + u-weighted momentum + KE-weighted energy) so u and p are
+// preserved across the contact.
 //
 // where |S| is the strain-rate magnitude, e the specific internal energy,
 // c the sound speed, h the representative cell size, and D^2 the (grid-scaled)
@@ -37,6 +43,7 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                         const ViscousParams& vp, const CellGradients& Grad,
                         const Field3D& primT,
                         Field3D& theta_src, Field3D& strain_src,
-                        Field3D& mu_art, Field3D& beta_art, Field3D& kappa_art);
+                        Field3D& mu_art, Field3D& beta_art, Field3D& kappa_art,
+                        Field3D& d_art);
 
 }  // namespace blast

@@ -28,7 +28,8 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                         const ViscousParams& vp, const CellGradients& Grad,
                         const Field3D& primT,
                         Field3D& theta_src, Field3D& strain_src,
-                        Field3D& mu_art, Field3D& beta_art, Field3D& kappa_art) {
+                        Field3D& mu_art, Field3D& beta_art, Field3D& kappa_art,
+                        Field3D& d_art) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
     const auto& rho = U[RHO];
 
@@ -83,6 +84,7 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
     mu_art.fill(0.0);
     beta_art.fill(0.0);
     kappa_art.fill(0.0);
+    d_art.fill(0.0);
 
     Real nu_max = 0.0;
 #pragma omp parallel for collapse(2) schedule(static) reduction(max : nu_max)
@@ -97,9 +99,10 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                 if (!std::isfinite(r) || r <= 0.0 || !std::isfinite(T) || T <= 0.0)
                     continue;
 
-                const Real Mth = d2mag(theta_src, i, j, k);
-                const Real MS  = d2mag(strain_src, i, j, k);
-                const Real MT  = d2mag(primT, i, j, k);
+                const Real Mth  = d2mag(theta_src, i, j, k);
+                const Real MS   = d2mag(strain_src, i, j, k);
+                const Real MT   = d2mag(primT, i, j, k);
+                const Real Mrho = d2mag(rho, i, j, k);
 
                 const Real th  = theta_src(i, j, k);
                 const Real fsw = (std::isfinite(th) && th < 0.0) ? 1.0 : 0.0;
@@ -108,15 +111,18 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                 const Real mua = vp.abv_cmu    * r * MS * h2;
                 const Real bta = vp.abv_cbeta  * r * fsw * Mth * h2;
                 const Real kpa = vp.abv_ckappa * (r * cs / T) * (cv * MT) * hbar;
+                // Mass/contact diffusivity (units L^2/T): C_D * c * (|D^2 rho|/rho) * h.
+                const Real Da  = vp.abv_cD     * cs * (Mrho / r) * hbar;
 
                 mu_art(i, j, k)    = mua;
                 beta_art(i, j, k)  = bta;
                 kappa_art(i, j, k) = kpa;
+                d_art(i, j, k)     = Da;
 
                 const Real inv_r  = 1.0 / r;
                 const Real nu_mom = (mua + std::fabs(bta)) * inv_r;
                 const Real nu_th  = kpa * inv_r / std::max(cp, 1e-30);
-                const Real nu_loc = std::max(nu_mom, nu_th);
+                const Real nu_loc = std::max({nu_mom, nu_th, Da});
                 if (nu_loc > nu_max) nu_max = nu_loc;
             }
 

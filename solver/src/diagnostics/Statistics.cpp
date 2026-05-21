@@ -12,11 +12,12 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos) {
     const long N = static_cast<long>(nx) * ny * nz;
 
     Real sum_u[3] = {0, 0, 0};
+    Real sum_mom[3] = {0, 0, 0};
     Real sum_rho = 0, sum_p = 0, sum_T = 0, sum_c = 0;
     Real sum_ke = 0, sum_E = 0, sum_eint = 0;
 
 #pragma omp parallel for collapse(2) schedule(static) \
-    reduction(+:sum_u[:3],sum_rho,sum_p,sum_T,sum_c,sum_ke,sum_E,sum_eint)
+    reduction(+:sum_u[:3],sum_mom[:3],sum_rho,sum_p,sum_T,sum_c,sum_ke,sum_E,sum_eint)
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
@@ -33,6 +34,9 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos) {
                 sum_u[0] += ui;
                 sum_u[1] += vi;
                 sum_u[2] += wi;
+                sum_mom[0] += U[RHOU](i, j, k);   // momentum density rho u_i
+                sum_mom[1] += U[RHOV](i, j, k);
+                sum_mom[2] += U[RHOW](i, j, k);
                 sum_rho  += r;
                 sum_p    += p;
                 sum_T    += T;
@@ -45,6 +49,7 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos) {
     VelocityStats s{};
     const Real inv_N = 1.0 / N;
     for (int d = 0; d < 3; ++d) s.u_mean[d] = sum_u[d] * inv_N;
+    for (int d = 0; d < 3; ++d) s.mom[d]    = sum_mom[d] * inv_N;
     s.rho_mean = sum_rho * inv_N;
     s.p_mean   = sum_p   * inv_N;
     s.T_mean   = sum_T   * inv_N;
@@ -142,15 +147,19 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos,
                              long long N_global, MPI_Comm comm) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
 
-    Real sum[10] = {0,0,0,0,0,0,0,0,0,0};  // u,v,w,rho,p,T,c,ke,rhoE,rho_eint
-#pragma omp parallel for collapse(2) schedule(static) reduction(+:sum[:10])
+    // u,v,w, rho,p,T,c, ke, rhoE, rho_eint, mom_x,mom_y,mom_z
+    Real sum[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0};
+#pragma omp parallel for collapse(2) schedule(static) reduction(+:sum[:13])
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
                 const Real r  = U[RHO ](i, j, k);
-                const Real ui = U[RHOU](i, j, k) / r;
-                const Real vi = U[RHOV](i, j, k) / r;
-                const Real wi = U[RHOW](i, j, k) / r;
+                const Real mxc = U[RHOU](i, j, k);
+                const Real myc = U[RHOV](i, j, k);
+                const Real mzc = U[RHOW](i, j, k);
+                const Real ui = mxc / r;
+                const Real vi = myc / r;
+                const Real wi = mzc / r;
                 const Real ke = 0.5 * r * (ui*ui + vi*vi + wi*wi);
                 const Real rE = U[RHOE](i, j, k);
                 const Real ein = rE - ke;        // internal energy density
@@ -162,14 +171,18 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos,
                 sum[7] += ke;
                 sum[8] += rE;    // total energy density
                 sum[9] += ein;   // internal energy density (from field variables)
+                sum[10] += mxc; sum[11] += myc; sum[12] += mzc;  // momentum density
             }
-    MPI_Allreduce(MPI_IN_PLACE, sum, 10, MPI_DOUBLE, MPI_SUM, comm);
+    MPI_Allreduce(MPI_IN_PLACE, sum, 13, MPI_DOUBLE, MPI_SUM, comm);
 
     VelocityStats s{};
     const Real inv_N = 1.0 / static_cast<Real>(N_global);
     s.u_mean[0] = sum[0] * inv_N;
     s.u_mean[1] = sum[1] * inv_N;
     s.u_mean[2] = sum[2] * inv_N;
+    s.mom[0]    = sum[10] * inv_N;
+    s.mom[1]    = sum[11] * inv_N;
+    s.mom[2]    = sum[12] * inv_N;
     s.rho_mean  = sum[3] * inv_N;
     s.p_mean    = sum[4] * inv_N;
     s.T_mean    = sum[5] * inv_N;

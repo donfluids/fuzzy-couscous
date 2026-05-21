@@ -13,6 +13,11 @@ namespace blast {
 
 struct VelocityStats {
     Real u_mean[3];      // volume-averaged velocity
+    Real mom[3];         // < rho u_i >  (mean momentum density). Total momentum
+                         // = mom * volume is conserved exactly for periodic BCs
+                         // (no boundary force); for slip walls it tracks the net
+                         // wall pressure impulse (~0 by symmetry for a centered
+                         // blast), so its drift is a symmetry / impulse monitor.
     Real u_rms;          // sqrt( <(u_i - <u_i>)^2> )
     Real ke_total;       // < (1/2) rho |u|^2 >        (mean kinetic energy density)
     Real tke;            // < (1/2) rho |u'|^2 >  with mean removed (Reynolds)

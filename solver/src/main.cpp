@@ -94,7 +94,8 @@ ViscousParams to_viscous(const PhysicsConfig& p, const BCSet& bc) {
 
 void log_header(std::ostream& os) {
     os << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,T_mean,"
-          "omega2,div2,eps_total,eps_sol,eps_dil,K_sol,K_dil,e_total,e_int\n";
+          "omega2,div2,eps_total,eps_sol,eps_dil,K_sol,K_dil,e_total,e_int,"
+          "mom_x,mom_y,mom_z\n";
 }
 
 void log_row(std::ostream& os, int step, Real t, Real dt,
@@ -106,7 +107,8 @@ void log_row(std::ostream& os, int step, Real t, Real dt,
        << b.omega2_mean << ',' << b.div2_mean << ','
        << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
        << h.K_sol << ',' << h.K_dil << ','
-       << s.e_total << ',' << s.e_int << '\n';
+       << s.e_total << ',' << s.e_int << ','
+       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << '\n';
 }
 
 }  // namespace
@@ -244,6 +246,11 @@ int main(int argc, char** argv) {
         if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
         const Real e_drift = (e_total_0 != 0.0) ? s.e_total / e_total_0 - 1.0 : 0.0;
         const Real m_drift = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 - 1.0 : 0.0;
+        // Momentum imbalance: |<rho u>| / (<rho> <c>), dimensionless. ~0 for a
+        // periodic or symmetric closed-chamber run; growth flags asymmetry.
+        const Real pmag = std::sqrt(s.mom[0]*s.mom[0] + s.mom[1]*s.mom[1]
+                                    + s.mom[2]*s.mom[2]);
+        const Real p_imbalance = pmag / std::max(s.rho_mean * s.c_mean, 1e-30);
         HelmholtzResult h{};
         ShellSpectrum sp{};
         if (c.output.write_helmholtz || c.output.write_spectra)
@@ -256,11 +263,11 @@ int main(int argc, char** argv) {
         stats_file.flush();
         BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
                    "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
-                   "e_tot={:.6e} dE/E0={:+.2e} dM/M0={:+.2e}",
+                   "e_tot={:.6e} dE/E0={:+.2e} dM/M0={:+.2e} |p|/rhoc={:.2e}",
                    step, t, dt, s.ke_total, s.tke, s.M_t,
                    b.eps_sol, b.eps_dil,
                    (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
-                   s.e_total, e_drift, m_drift);
+                   s.e_total, e_drift, m_drift, p_imbalance);
     };
 
     Real t = start_time;

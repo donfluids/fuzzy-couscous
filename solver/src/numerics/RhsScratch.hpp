@@ -26,6 +26,8 @@ struct RhsScratch {
     Field3D alpha;              // local max-eigenvalue per cell
     Field3D theta_dil;          // sensor dilated along the active direction
     Field3D dilate_tmp;         // working buffer for dilate_sensor_along
+    Field3D contact;            // multifluid: 1 near a gamma-contact (G jump)
+    Field3D contact_dil;        // contact flag dilated along the active direction
     State   Flux_inv;           // inviscid flux scratch (one per direction reuse)
 
     // Viscous path

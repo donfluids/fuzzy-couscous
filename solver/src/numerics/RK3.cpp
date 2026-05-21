@@ -19,24 +19,33 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
 }
 
 void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
-               const ViscousParams& vp, Real dt) {
+               const ViscousParams& vp, Real dt, const Field3D* gfn) {
     auto eval_rhs = [&](const State& Uin) {
-        compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn);
         if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 
+    // Positivity floor only when running multifluid (gfn != nullptr): a strong
+    // variable-gamma contact / rarefaction can overshoot to negative rho or p.
+    // Single-gas runs (gfn == nullptr) skip this and stay bit-identical.
+    const bool floor = (gfn != nullptr);
+    constexpr Real kRhoFloor = 1e-5, kEintFloor = 1e-6;
+
     apply_bcs(U, bc);
     eval_rhs(U);
     state_axpby(U1_, 1.0, U, dt, k_);
+    if (floor) enforce_positivity(U1_, kRhoFloor, kEintFloor);
 
     apply_bcs(U1_, bc);
     eval_rhs(U1_);
     state_axpbypcz(U1_, 3.0 / 4.0, U, 1.0 / 4.0, U1_, dt / 4.0, k_);
+    if (floor) enforce_positivity(U1_, kRhoFloor, kEintFloor);
 
     apply_bcs(U1_, bc);
     eval_rhs(U1_);
     state_axpbypcz(U, 1.0 / 3.0, U, 2.0 / 3.0, U1_, 2.0 / 3.0 * dt, k_);
+    if (floor) enforce_positivity(U, kRhoFloor, kEintFloor);
 }
 
 void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,

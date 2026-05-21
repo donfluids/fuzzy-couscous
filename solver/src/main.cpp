@@ -14,6 +14,8 @@
 #include "numerics/RK3.hpp"
 #include "physics/EOS.hpp"
 #include "physics/Forcing.hpp"
+#include "physics/Multifluid.hpp"
+#include "turbulence/BHR.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -147,6 +149,46 @@ int main(int argc, char** argv) {
     BCSet bc = c.bc;
     apply_bcs(U, bc);
 
+    // Two-gamma multifluid: G = 1/(gamma-1) field carries dense-products vs air.
+    Field3D Gfield(c.grid.nx, c.grid.ny, c.grid.nz);
+    Gfield.fill(1.0 / (c.physics.eos.gamma - 1.0));
+    const Field3D* gptr = nullptr;
+    if (c.multifluid.enabled) {
+        MultifluidParams mp;
+        mp.enabled = true;
+        mp.gamma_air = c.physics.eos.gamma;
+        mp.gamma_p   = c.multifluid.gamma_p;
+        mp.R         = c.physics.eos.R;
+        mp.rho_p = c.multifluid.rho_p; mp.T_p = c.multifluid.T_p;
+        mp.rho_a = c.multifluid.rho_a; mp.T_a = c.multifluid.T_a;
+        mp.q = c.multifluid.q; mp.rho_e = c.multifluid.rho_e; mp.T_e = c.multifluid.T_e;
+        mp.cj_u_frac = c.multifluid.cj_u_frac;
+        mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
+        mf_init_blast(U, Gfield, c.grid, mp);
+        apply_bcs(U, bc);
+        gptr = &Gfield;
+        BLAST_INFO("multifluid ON: products gamma={} rho={} T={} vs air gamma={} rho={}",
+                   mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
+    }
+
+    // BHR variable-density turbulence model (operator-split sub-step).
+    BHRParams bp;
+    bp.enabled    = c.turbulence.enabled;
+    bp.feedback   = c.turbulence.feedback;
+    bp.mu_phys    = c.physics.mu;
+    bp.C_a        = c.turbulence.C_a;
+    bp.C_b        = c.turbulence.C_b;
+    bp.L_max      = c.turbulence.L_max;
+    bp.prod_limit = c.turbulence.prod_limit;
+    bp.seed_scale = c.turbulence.seed_scale;
+    bp.b_seed     = c.turbulence.b_seed;
+    TurbState turb(c.grid.nx, c.grid.ny, c.grid.nz);
+    if (bp.enabled) {
+        bhr_init(turb, U, c.grid, eos, bp);
+        BLAST_INFO("BHR turbulence model ON (feedback={}, b_seed={})",
+                   bp.feedback, bp.b_seed);
+    }
+
     RK3 driver(c.grid.nx, c.grid.ny, c.grid.nz, U.ng());
 
     std::unique_ptr<SpectralForcing> forcing;
@@ -200,22 +242,33 @@ int main(int argc, char** argv) {
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
-        Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic);
+        Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic, gptr);
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, c.grid, vp, c.time.cfl_viscous)
                     : 1e30;
-        Real dt = std::min({dt_hyp, dt_vis, c.time.dt_max});
+        Real dt_turb = 1e30;
+        if (bp.enabled && bp.feedback) {
+            const Real nut = bhr_max_nu_t(U, turb, bp);
+            const Real dxm = std::min({c.grid.dx(), c.grid.dy(), c.grid.dz()});
+            if (nut > 0.0) dt_turb = c.time.cfl_viscous * dxm * dxm / nut;
+        }
+        Real dt = std::min({dt_hyp, dt_vis, dt_turb, c.time.dt_max});
         if (t + dt > c.time.t_end) dt = c.time.t_end - t;
         if (!std::isfinite(dt) || dt <= 0.0) {
             BLAST_ERROR("non-finite dt at step {}; stopping", step);
             break;
         }
 
-        driver.step(U, c.grid, bc, eos, vp, dt);
+        driver.step(U, c.grid, bc, eos, vp, dt, gptr);
+        if (gptr) mf_advect_G(Gfield, U, c.grid, bc, dt);
         if (forcing) {
             forcing->evolve_ou(dt);
             forcing->apply(U, c.grid, dt);
             apply_bcs(U, bc);
+        }
+        if (bp.enabled) {
+            apply_bcs(U, bc);
+            bhr_substep(U, turb, c.grid, bc, eos, bp, dt);
         }
         t += dt;
         ++step;
@@ -225,10 +278,32 @@ int main(int argc, char** argv) {
             apply_lele_filter(U, bc, c.filter.sigma);
         }
 
-        if (step % c.output.stats_every == 0)
+        if (step % c.output.stats_every == 0) {
             write_diagnostics(step, t, dt);
-        if (step % c.output.snapshot_every == 0)
+            if (bp.enabled) {
+                Real kmx, amx, bmx;
+                bhr_peaks(turb, kmx, amx, bmx);
+                BLAST_INFO("  BHR <rho k>={:.3e} k_pk={:.3e} |a|_pk={:.3e} b_pk={:.3e}",
+                           bhr_tke_integral(U, turb, c.grid), kmx, amx, bmx);
+            }
+            if (gptr) {
+                Real pmn, pmx;
+                mf_pressure_minmax(U, Gfield, pmn, pmx);
+                BLAST_INFO("  multifluid p in [{:.3e}, {:.3e}]", pmn, pmx);
+            }
+        }
+        if (step % c.output.snapshot_every == 0) {
             writer.write_snapshot(U, c.grid, eos, t, step);
+            if (bp.enabled) {
+                bhr_write_radial_profiles(U, turb, c.grid,
+                    c.output.out_dir + "/" + c.run_name + "_bhrprof_"
+                    + std::to_string(step) + ".csv", t);
+                Real fk_mean = bhr_write_sensor_profiles(U, turb, c.grid,
+                    c.output.out_dir + "/" + c.run_name + "_sensor_"
+                    + std::to_string(step) + ".csv", t);
+                BLAST_INFO("  hybrid sensor <f_k>={:.3f}", fk_mean);
+            }
+        }
         if (c.output.checkpoint_every > 0
             && step % c.output.checkpoint_every == 0)
             write_checkpoint(ckpt_path, U, c.grid, t, step);

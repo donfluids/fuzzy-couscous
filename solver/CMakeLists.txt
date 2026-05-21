@@ -113,9 +113,11 @@ set(BLAST_CORE_SOURCES
     src/numerics/Ducros.cpp
     src/numerics/Filter.cpp
     src/numerics/Gradients.cpp
+    src/turbulence/BHR.cpp
     src/ic/Canonical.cpp
     src/physics/RiemannExact.cpp
     src/physics/Forcing.cpp
+    src/physics/Multifluid.cpp
     src/diagnostics/FFT.cpp
     src/diagnostics/Spectra.cpp
     src/diagnostics/Statistics.cpp

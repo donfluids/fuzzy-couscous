@@ -54,6 +54,37 @@ inline void state_axpby(State& out, Real a, const State& x, Real b, const State&
     }
 }
 
+// Positivity floor: clamp density and internal-energy density to small positive
+// values so a strong rarefaction / contact overshoot cannot drive a cell to
+// negative rho or negative p (which makes c = sqrt(gamma p/rho) NaN and poisons
+// the whole field). The internal-energy floor guarantees p > 0 independent of
+// the local gamma since e_int = rhoE - ke = p/(gamma-1) = p*G > 0 iff p > 0.
+// Only touches cells that would otherwise be invalid, so a run that is already
+// positive everywhere is left bit-for-bit unchanged. Returns the number of
+// cells clamped (for diagnostics). Interior only; ghosts are reset by BCs.
+inline long enforce_positivity(State& U, Real rho_floor, Real eint_floor) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    Field3D& rho = U[RHO];
+    Field3D& mx  = U[RHOU];
+    Field3D& my  = U[RHOV];
+    Field3D& mz  = U[RHOW];
+    Field3D& E   = U[RHOE];
+    long nclamp = 0;
+#pragma omp parallel for collapse(2) schedule(static) reduction(+:nclamp)
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                Real r = rho(i,j,k);
+                if (!(r >= rho_floor)) { r = rho_floor; rho(i,j,k) = r; ++nclamp; }
+                const Real ke = 0.5 * (mx(i,j,k)*mx(i,j,k)
+                                     + my(i,j,k)*my(i,j,k)
+                                     + mz(i,j,k)*mz(i,j,k)) / r;
+                const Real eint = E(i,j,k) - ke;
+                if (!(eint >= eint_floor)) { E(i,j,k) = ke + eint_floor; ++nclamp; }
+            }
+    return nclamp;
+}
+
 // out = a*x + b*y + c*z, used by RK3.
 inline void state_axpbypcz(State& out, Real a, const State& x, Real b,
                            const State& y, Real c, const State& z) {

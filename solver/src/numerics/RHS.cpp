@@ -38,7 +38,7 @@ Index stride_for(int d, const Field3D& f) {
 }
 
 void fill_flux_and_alpha(const State& U, int d, const IdealGas& eos,
-                         State& Flux, Field3D& alpha) {
+                         State& Flux, Field3D& alpha, const Field3D* gfn) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
     const auto& rho = U[RHO];
     const auto& mx  = U[RHOU];
@@ -62,8 +62,9 @@ void fill_flux_and_alpha(const State& U, int d, const IdealGas& eos,
                 const Real v = C.my * inv_rho;
                 const Real w = C.mz * inv_rho;
                 const Real ke = 0.5 * C.rho * (u*u + v*v + w*w);
-                const Real p  = eos.pressure(C.rho, C.rhoE - ke);
-                const Real c  = eos.sound_speed(C.rho, p);
+                const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;
+                const Real p  = (gloc - 1.0) * (C.rhoE - ke);
+                const Real c  = std::sqrt(gloc * p / C.rho);
                 const Real ud = (d == 0 ? u : d == 1 ? v : w);
                 FluxVec F = euler_flux(C, p, d);
                 Fr(i,j,k) = F.f[RHO];
@@ -177,6 +178,95 @@ void dilate_sensor_along(Field3D& theta, Field3D& scratch, int d) {
                 theta(i, j, k) = scratch(i, j, k);
 }
 
+// Multifluid inviscid divergence with GATED double-flux (Abgrall & Karni, JCP
+// 2001). A fully conservative scheme with a per-cell variable gamma produces
+// spurious pressure oscillations at a gamma-contact (Karni 1994), which blow up
+// a strong products/air interface. The double-flux remedy: when updating cell c,
+// FREEZE gamma = gamma_c across c's whole flux stencil so the local scheme is a
+// single-gamma scheme (no contact oscillation). In a single-fluid region (G
+// uniform across the stencil) the frozen-gamma flux is IDENTICAL to the cheap
+// shared conservative flux, so we only pay the per-cell recompute within radius
+// 3 of a contact (the `contact` flag). Bulk cells take the fast shared path.
+// The shared face is evaluated twice near a contact (once per neighbour, with
+// each one's gamma) -> energy is not exactly conserved across a contact, the
+// accepted O(d gamma) trade-off.
+void add_inviscid_divergence_mf(const State& U, const State& Flux,
+                                const Field3D& alpha, const Field3D& theta,
+                                const Field3D& G, const Field3D& contact,
+                                int d, Real inv_dh, State& Rhs) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const int di = (d == 0), dj = (d == 1), dk = (d == 2);
+    const Index s = stride_for(d, Flux[RHO]);
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+    const auto& E   = U[RHOE];
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const int im = i - di, jm = j - dj, km = k - dk;
+                const int ip = i + di, jp = j + dj, kp = k + dk;
+                const Real th_lo = std::max(theta(im,jm,km), theta(i,j,k));
+                const Real th_hi = std::max(theta(i,j,k),    theta(ip,jp,kp));
+                const bool weno_lo = th_lo > kSensorThreshold;
+                const bool weno_hi = th_hi > kSensorThreshold;
+
+                // Is a gamma-contact within this cell's flux stencil (radius 3)?
+                bool near = false;
+                for (int t = -3; t <= 3; ++t)
+                    if (contact(i + t*di, j + t*dj, k + t*dk) > 0.5) { near = true; break; }
+
+                if (!near) {
+                    // Fast shared-flux conservative path (== single-gas).
+                    const Real alpha_lo = std::max(alpha(im,jm,km), alpha(i,j,k));
+                    const Real alpha_hi = std::max(alpha(i,j,k),    alpha(ip,jp,kp));
+                    for (int v = 0; v < NCONS; ++v) {
+                        const Field3D& F = Flux[v];
+                        const Field3D& Q = U[v];
+                        const Real Fhi = face_flux(&F(i,j,k),   &Q(i,j,k),   alpha_hi, s, weno_hi);
+                        const Real Flo = face_flux(&F(im,jm,km),&Q(im,jm,km),alpha_lo, s, weno_lo);
+                        Rhs[v](i,j,k) -= (Fhi - Flo) * inv_dh;
+                    }
+                    continue;
+                }
+
+                // Double-flux: recompute the 7-cell local stencil with the
+                // update cell's frozen gamma (component-major, stride 1).
+                const Real gm1 = 1.0 / G(i, j, k);     // gamma - 1
+                const Real gam = 1.0 + gm1;
+                Real Fl[NCONS][7], Ul[NCONS][7], al[7];
+                for (int t2 = -3; t2 <= 3; ++t2) {
+                    const int t = t2 + 3;
+                    const int ii = i + t2*di, jj = j + t2*dj, kk = k + t2*dk;
+                    const Real r  = rho(ii,jj,kk);
+                    const Real ru = mx(ii,jj,kk), rv = my(ii,jj,kk), rw = mz(ii,jj,kk);
+                    const Real Ec = E(ii,jj,kk);
+                    const Real inv = 1.0 / r;
+                    const Real u = ru*inv, v = rv*inv, w = rw*inv;
+                    const Real ke = 0.5*(ru*u + rv*v + rw*w);
+                    const Real p  = gm1 * (Ec - ke);            // frozen-gamma p
+                    const Real ud = (d == 0 ? u : d == 1 ? v : w);
+                    Ul[RHO ][t] = r;   Fl[RHO ][t] = r*ud;
+                    Ul[RHOU][t] = ru;  Fl[RHOU][t] = ru*ud + (d==0)*p;
+                    Ul[RHOV][t] = rv;  Fl[RHOV][t] = rv*ud + (d==1)*p;
+                    Ul[RHOW][t] = rw;  Fl[RHOW][t] = rw*ud + (d==2)*p;
+                    Ul[RHOE][t] = Ec;  Fl[RHOE][t] = (Ec + p)*ud;
+                    const Real c = std::sqrt(std::max(gam*p/r, 0.0));
+                    al[t] = std::fabs(ud) + c;
+                }
+                const Real alpha_hi = std::max(al[3], al[4]);   // cells i, i+1
+                const Real alpha_lo = std::max(al[2], al[3]);   // cells i-1, i
+                for (int v = 0; v < NCONS; ++v) {
+                    const Real Fhi = face_flux(&Fl[v][3], &Ul[v][3], alpha_hi, 1, weno_hi);
+                    const Real Flo = face_flux(&Fl[v][2], &Ul[v][2], alpha_lo, 1, weno_lo);
+                    Rhs[v](i,j,k) -= (Fhi - Flo) * inv_dh;
+                }
+            }
+}
+
 void add_face_flux_divergence(const State& U, const State& Flux,
                               const Field3D& alpha, const Field3D& theta,
                               int d, Real inv_dh, State& Rhs) {
@@ -227,7 +317,7 @@ void add_face_flux_divergence(const State& U, const State& Flux,
 }  // namespace
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          RhsScratch& scratch, State& Rhs) {
+                          RhsScratch& scratch, State& Rhs, const Field3D* gfn) {
     for (int v = 0; v < NCONS; ++v) Rhs.fill(v, 0.0);
 
     Field3D& theta     = scratch.theta;
@@ -238,6 +328,38 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
 
     compute_sensor(U, g, eos, theta);
 
+    // Multifluid: shock sensors miss CONTACTS (uniform p,u; jump in rho/gamma),
+    // so the high-order central scheme rings at the products-air interface. Force
+    // WENO there by firing the sensor on a relative G = 1/(gamma-1) jump, and
+    // flag the cell in `contact` so the gated double-flux activates near it.
+    Field3D& contact = scratch.contact;
+    if (gfn) {
+        const Field3D& G = *gfn;
+        const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+        contact.fill(0.0);
+        // Compute on a band wide enough for the radius-3 stencil reads in
+        // add_inviscid_divergence_mf (interior cell stencils reach +/-3).
+        const int lo = -ng + 1, hix = nx + ng - 1, hiy = ny + ng - 1, hiz = nz + ng - 1;
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = lo; k < hiz; ++k)
+            for (int j = lo; j < hiy; ++j)
+                for (int i = lo; i < hix; ++i) {
+                    const Real Gc = G(i,j,k);
+                    Real m = 0.0;
+                    m = std::max(m, std::fabs(G(i+1,j,k)-Gc));
+                    m = std::max(m, std::fabs(G(i-1,j,k)-Gc));
+                    m = std::max(m, std::fabs(G(i,j+1,k)-Gc));
+                    m = std::max(m, std::fabs(G(i,j-1,k)-Gc));
+                    m = std::max(m, std::fabs(G(i,j,k+1)-Gc));
+                    m = std::max(m, std::fabs(G(i,j,k-1)-Gc));
+                    if (m / (Gc + 1e-30) > 0.01) {
+                        contact(i,j,k) = 1.0;
+                        if (i >= -1 && i <= nx && j >= -1 && j <= ny && k >= -1 && k <= nz)
+                            theta(i,j,k) = 1.0;
+                    }
+                }
+    }
+
     auto run_direction = [&](int d, Real inv_h) {
         // Reset dilated sensor to original, then dilate along d in-place
         // using the pre-allocated scratch buffer.
@@ -247,8 +369,15 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
         for (Index i = 0; i < N; ++i) theta_dil.raw()[i] = theta.raw()[i];
         dilate_sensor_along(theta_dil, dil_tmp, d);
 
-        fill_flux_and_alpha(U, d, eos, Flux, alpha);
-        add_face_flux_divergence(U, Flux, alpha, theta_dil, d, inv_h, Rhs);
+        fill_flux_and_alpha(U, d, eos, Flux, alpha, gfn);
+        if (gfn) {
+            // Multifluid: gated double-flux. Fast shared conservative flux in
+            // single-fluid cells; frozen-gamma recompute only near a contact.
+            add_inviscid_divergence_mf(U, Flux, alpha, theta_dil, *gfn, contact,
+                                       d, inv_h, Rhs);
+        } else {
+            add_face_flux_divergence(U, Flux, alpha, theta_dil, d, inv_h, Rhs);
+        }
     };
 
     run_direction(0, 1.0 / g.dx());
@@ -257,17 +386,17 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
 }
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          State& Rhs) {
+                          State& Rhs, const Field3D* gfn) {
     // Standalone path used by tests / ad-hoc callers. Allocates scratch
     // once on the stack; production runs go through the RhsScratch
     // overload via RK3.
     RhsScratch s;
     s.allocate(U.nx(), U.ny(), U.nz(), U.ng());
-    compute_rhs_inviscid(U, g, eos, s, Rhs);
+    compute_rhs_inviscid(U, g, eos, s, Rhs, gfn);
 }
 
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl) {
+                       Real cfl, const Field3D* gfn) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
     const auto& rho = U[RHO];
     const auto& mx  = U[RHOU];
@@ -286,8 +415,9 @@ Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                 const Real iv = my(i,j,k) / r;
                 const Real iw = mz(i,j,k) / r;
                 const Real ke = 0.5 * r * (iu*iu + iv*iv + iw*iw);
-                const Real p  = eos.pressure(r, E(i,j,k) - ke);
-                const Real c  = eos.sound_speed(r, p);
+                const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;
+                const Real p  = (gloc - 1.0) * (E(i,j,k) - ke);
+                const Real c  = std::sqrt(gloc * p / r);
                 const Real lx = (std::fabs(iu) + c) / dx;
                 const Real ly = (ny > 1) ? (std::fabs(iv) + c) / dy : 0.0;
                 const Real lz = (nz > 1) ? (std::fabs(iw) + c) / dz : 0.0;

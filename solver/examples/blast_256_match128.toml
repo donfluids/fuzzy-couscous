@@ -1,0 +1,62 @@
+# 256^3 blast, IC physically IDENTICAL to the 128^3 budget seed1 (tanh=0.012),
+# so only the grid resolution differs -> controlled resolution comparison of the
+# solenoidal cascade. nu6 = 2.5e-14/64 = 3.9e-16 keeps the Nyquist damping rate.
+run_name = "blast_256_match128"
+
+[grid]
+nx = 256
+ny = 256
+nz = 256
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.1
+rho_B          = 10.0
+T_B            = 100.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2
+tanh_thickness = 0.012        # MATCH 128^3 physical interface (~3.1 dx at 256^3)
+ensemble_amp   = 0.05
+ensemble_seed  = 1
+
+[physics]
+gamma        = 1.4
+R            = 1.0
+mu           = 5.0e-4
+prandtl      = 0.71
+bulk_visc    = 0.0
+hyper_coeff  = 0.0
+hyper6_coeff = 3.9e-16
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.1
+dt_max         = 1.0
+max_steps      = 200000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "out_blast_256_match128"
+snapshot_every   = 100
+stats_every      = 10
+checkpoint_every = 1000000
+write_spectra    = true
+write_helmholtz  = true

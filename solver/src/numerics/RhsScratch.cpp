@@ -12,6 +12,8 @@ void RhsScratch::allocate(int nx, int ny, int nz, int ng) {
     alpha.resize(nx, ny, nz, ng);
     theta_dil.resize(nx, ny, nz, ng);
     dilate_tmp.resize(nx, ny, nz, ng);
+    contact.resize(nx, ny, nz, ng);
+    contact_dil.resize(nx, ny, nz, ng);
     Flux_inv.allocate(nx, ny, nz, ng);
 
     prim_u.resize(nx, ny, nz, ng);

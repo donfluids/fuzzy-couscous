@@ -21,10 +21,13 @@ struct RhsScratch;  // numerics/RhsScratch.hpp
 // tests and ad-hoc calls); the scratch-aware one uses pre-allocated buffers
 // from RhsScratch, which is how RK3 wires it in production (avoids ~1.5 GB
 // of allocator + first-touch traffic per step at 256^3).
+// gfn (optional): per-cell G = 1/(gamma-1) field for a two-gamma multifluid.
+// nullptr -> single ideal gas (eos.gamma everywhere; existing behavior).
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          State& Rhs);
+                          State& Rhs, const Field3D* gfn = nullptr);
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          RhsScratch& scratch, State& Rhs);
+                          RhsScratch& scratch, State& Rhs,
+                          const Field3D* gfn = nullptr);
 
 // Adds viscous contribution + div(tau u - q) to existing Rhs in-place.
 // Caller has called apply_bcs and (if needed) compute_rhs_inviscid first.
@@ -35,7 +38,7 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
 
 // Returns the global maximum stable timestep for the hyperbolic CFL.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl);
+                       Real cfl, const Field3D* gfn = nullptr);
 
 // Returns the global maximum stable timestep for the viscous CFL,
 // dt = cfl * dx^2 / nu where nu = mu/rho_min.

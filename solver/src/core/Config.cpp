@@ -135,6 +135,28 @@ Config load_config(const std::string& path) {
     c.forcing.T_corr     = pick<double>(fc["T_corr"],      c.forcing.T_corr);
     c.forcing.seed       = pick<int64_t>(fc["seed"],       c.forcing.seed);
 
+    auto tu = tbl["turbulence"];
+    c.turbulence.enabled    = pick<bool>(tu["enabled"],    c.turbulence.enabled);
+    c.turbulence.feedback   = pick<bool>(tu["feedback"],   c.turbulence.feedback);
+    c.turbulence.C_a        = pick<double>(tu["C_a"],      c.turbulence.C_a);
+    c.turbulence.C_b        = pick<double>(tu["C_b"],      c.turbulence.C_b);
+    c.turbulence.L_max      = pick<double>(tu["L_max"],    c.turbulence.L_max);
+    c.turbulence.prod_limit = pick<double>(tu["prod_limit"], c.turbulence.prod_limit);
+    c.turbulence.seed_scale = pick<double>(tu["seed_scale"], c.turbulence.seed_scale);
+    c.turbulence.b_seed     = pick<double>(tu["b_seed"],   c.turbulence.b_seed);
+
+    auto mf = tbl["multifluid"];
+    c.multifluid.enabled = pick<bool>(mf["enabled"],   c.multifluid.enabled);
+    c.multifluid.gamma_p = pick<double>(mf["gamma_p"], c.multifluid.gamma_p);
+    c.multifluid.rho_p   = pick<double>(mf["rho_p"],   c.multifluid.rho_p);
+    c.multifluid.T_p     = pick<double>(mf["T_p"],     c.multifluid.T_p);
+    c.multifluid.rho_a   = pick<double>(mf["rho_a"],   c.multifluid.rho_a);
+    c.multifluid.T_a     = pick<double>(mf["T_a"],     c.multifluid.T_a);
+    c.multifluid.q       = pick<double>(mf["q"],       c.multifluid.q);
+    c.multifluid.rho_e   = pick<double>(mf["rho_e"],   c.multifluid.rho_e);
+    c.multifluid.T_e     = pick<double>(mf["T_e"],     c.multifluid.T_e);
+    c.multifluid.cj_u_frac = pick<double>(mf["cj_u_frac"], c.multifluid.cj_u_frac);
+
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
     c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);

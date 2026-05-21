@@ -112,6 +112,28 @@ struct ForcingConfig {
     int  seed       = 12345;
 };
 
+struct MultifluidConfig {
+    bool enabled   = false;    // two-gamma multifluid (dense products vs air)
+    Real gamma_p   = 1.25;     // products gamma (larger cv); air uses physics.eos.gamma
+    Real rho_p     = 10.0;
+    Real T_p       = 100.0;
+    Real rho_a     = 1.0;
+    Real T_a       = 1.0;
+    // Chapman-Jouguet products IC (q>0 enables it; overrides rho_p/T_p):
+    Real q         = 0.0;      // specific heat release of the explosive
+    Real rho_e     = 0.0;      // unreacted explosive density (0 -> use rho_p)
+    Real T_e       = 1.0;      // unreacted explosive temperature
+    Real cj_u_frac = 0.0;      // fraction of CJ particle velocity imposed at t=0
+};
+
+struct TurbulenceConfig {
+    bool enabled  = false;     // run the BHR sub-step
+    bool feedback = false;     // two-way coupling to the mean
+    Real C_a = 1.0, C_b = 1.0;
+    Real L_max = 0.5, prod_limit = 10.0;
+    Real seed_scale = 1e-3, b_seed = 0.0;
+};
+
 struct OutputConfig {
     std::string out_dir         = "out";
     int         snapshot_every  = 100;
@@ -131,6 +153,8 @@ struct Config {
     TimeConfig     time;
     FilterConfig   filter;
     ForcingConfig  forcing;
+    TurbulenceConfig turbulence;
+    MultifluidConfig multifluid;
     OutputConfig   output;
     std::string    run_name = "run";
 };

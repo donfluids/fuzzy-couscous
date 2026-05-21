@@ -127,6 +127,15 @@ int main(int argc, char** argv) {
 
     IdealGas eos{c.physics.eos};
     ViscousParams vp = to_viscous(c.physics, c.bc);
+    // Localized artificial diffusivity (LAD), configured via the [afp] block.
+    vp.abv_enabled      = c.afp.enabled;
+    vp.abv_cbeta        = c.afp.C_beta;
+    vp.abv_cmu          = c.afp.C_mu;
+    vp.abv_ckappa       = c.afp.C_kappa;
+    vp.abv_disable_weno = c.afp.disable_weno;
+    if (vp.abv_enabled)
+        BLAST_INFO("LAD on: C_beta={} C_mu={} C_kappa={} disable_weno={}",
+                   vp.abv_cbeta, vp.abv_cmu, vp.abv_ckappa, vp.abv_disable_weno);
 
     State U(c.grid.nx, c.grid.ny, c.grid.nz);
     Real start_time = 0.0;
@@ -252,7 +261,17 @@ int main(int argc, char** argv) {
             const Real dxm = std::min({c.grid.dx(), c.grid.dy(), c.grid.dz()});
             if (nut > 0.0) dt_turb = c.time.cfl_viscous * dxm * dxm / nut;
         }
-        Real dt = std::min({dt_hyp, dt_vis, dt_turb, c.time.dt_max});
+        // LAD viscous limit (one-step lag: uses the max artificial diffusivity
+        // from the previous step; 1e30 on the first step).
+        Real dt_abv = 1e30;
+        if (vp.abv_enabled) {
+            const Real num = driver.last_abv_nu_max();
+            if (num > 0.0) {
+                const Real dxm = std::min({c.grid.dx(), c.grid.dy(), c.grid.dz()});
+                dt_abv = c.time.cfl_viscous * dxm * dxm / num;
+            }
+        }
+        Real dt = std::min({dt_hyp, dt_vis, dt_turb, dt_abv, c.time.dt_max});
         if (t + dt > c.time.t_end) dt = c.time.t_end - t;
         if (!std::isfinite(dt) || dt <= 0.0) {
             BLAST_ERROR("non-finite dt at step {}; stopping", step);

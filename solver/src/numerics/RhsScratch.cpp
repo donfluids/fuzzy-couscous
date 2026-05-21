@@ -27,4 +27,14 @@ void RhsScratch::allocate(int nx, int ny, int nz, int ng) {
     lap2.resize(nx, ny, nz, ng);
 }
 
+void RhsScratch::allocate_abv(int nx, int ny, int nz, int ng) {
+    if (abv_allocated) return;
+    lad_theta.resize(nx, ny, nz, ng);
+    lad_strain.resize(nx, ny, nz, ng);
+    mu_art.resize(nx, ny, nz, ng);
+    beta_art.resize(nx, ny, nz, ng);
+    kappa_art.resize(nx, ny, nz, ng);
+    abv_allocated = true;
+}
+
 }  // namespace blast

@@ -20,9 +20,11 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
 
 void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                const ViscousParams& vp, Real dt, const Field3D* gfn) {
+    scratch_.disable_weno = vp.abv_disable_weno;
     auto eval_rhs = [&](const State& Uin) {
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
+            || vp.abv_enabled)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 
@@ -51,9 +53,11 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
 void RK3::step_with_source(State& U, const Grid& g, const BCSet& bc,
                            const IdealGas& eos, const ViscousParams& vp,
                            Real dt, Real t_current, const SourceCallback& src) {
+    scratch_.disable_weno = vp.abv_disable_weno;
     auto eval_rhs = [&](const State& Uin, Real t_stage) {
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
+            || vp.abv_enabled)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
         if (src) src(k_, g, t_stage);
     };
@@ -81,11 +85,13 @@ void RK3::init_spectral_hyper_mpi(const Grid& global_grid, const Domain& d,
 void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                    const ViscousParams& vp, Real dt,
                    const Domain& d, Halo& halo) {
+    scratch_.disable_weno = vp.abv_disable_weno;
     auto eval_rhs = [&](State& Uin) {
         halo.exchange(Uin);
         apply_bcs(Uin, bc, d);
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_);
-        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0)
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
+            || vp.abv_enabled)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
     };
 

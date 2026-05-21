@@ -1,6 +1,7 @@
 #include "numerics/RHS.hpp"
 
 #include "core/Field3D.hpp"
+#include "numerics/ArtificialDiffusivity.hpp"
 #include "numerics/Ducros.hpp"
 #include "numerics/Gradients.hpp"
 #include "numerics/HyperdissipationSpectral.hpp"
@@ -328,6 +329,10 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
 
     compute_sensor(U, g, eos, theta);
 
+    // LAD-only mode: suppress the Ducros/WENO sensor so the central scheme runs
+    // everywhere and localized artificial diffusivity is the sole shock sink.
+    if (scratch.disable_weno) theta.fill(0.0);
+
     // Multifluid: shock sensors miss CONTACTS (uniform p,u; jump in rho/gamma),
     // so the high-order central scheme rings at the products-air interface. Force
     // WENO there by firing the sensor on a relative G = 1/(gamma-1) jump, and
@@ -520,6 +525,73 @@ void fill_viscous_flux_dir(const State& U, const CellGradients& G,
             }
 }
 
+// Cell-centered artificial (LAD) flux for direction d, on [-1, n+1) -- exactly
+// the band the compact (2nd-order) divergence below needs for interior cells.
+void fill_artificial_flux_dir(const State& U, const CellGradients& G,
+                              const Field3D& mu_art, const Field3D& beta_art,
+                              const Field3D& kappa_art, int d, State& Flux) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    const int lo = -1;
+    const int hi_x = nx + 1;
+    const int hi_y = (ny > 1) ? ny + 1 : ny;
+    const int hi_z = (nz > 1) ? nz + 1 : nz;
+    const int jlo = (ny > 1) ? -1 : 0;
+    const int klo = (nz > 1) ? -1 : 0;
+
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+    Field3D& Fr = Flux[RHO]; Field3D& Fu = Flux[RHOU]; Field3D& Fv = Flux[RHOV];
+    Field3D& Fw = Flux[RHOW]; Field3D& FE = Flux[RHOE];
+    Fr.fill(0.0); Fu.fill(0.0); Fv.fill(0.0); Fw.fill(0.0); FE.fill(0.0);
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = klo; k < hi_z; ++k)
+        for (int j = jlo; j < hi_y; ++j)
+            for (int i = lo; i < hi_x; ++i) {
+                const Real r = rho(i, j, k);
+                CellState C{};
+                C.u = mx(i, j, k) / r;
+                C.v = my(i, j, k) / r;
+                C.w = mz(i, j, k) / r;
+                for (int a = 0; a < 3; ++a) {
+                    for (int b = 0; b < 3; ++b) C.dudx[a][b] = G.du[a][b](i, j, k);
+                    C.dTdx[a] = G.dT[a](i, j, k);
+                }
+                ViscousFluxVec Gv = artificial_flux(
+                    C, mu_art(i, j, k), beta_art(i, j, k), kappa_art(i, j, k), d);
+                Fr(i, j, k) = Gv.f[RHO ];
+                Fu(i, j, k) = Gv.f[RHOU];
+                Fv(i, j, k) = Gv.f[RHOV];
+                Fw(i, j, k) = Gv.f[RHOW];
+                FE(i, j, k) = Gv.f[RHOE];
+            }
+}
+
+// Compact 2nd-order central divergence of an artificial flux (radius 1), so it
+// needs the flux only on [-1, n+1). The artificial diffusivity is a sub-grid
+// regularization, so a low-order divergence is appropriate and keeps the
+// 2nd-derivative LAD sensor within NGHOST=6.
+void add_compact_divergence(const State& Flux, int d, Real inv_dh, State& Rhs) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const Real half_inv = 0.5 * inv_dh;
+    for (int v = 0; v < NCONS; ++v) {
+        if (v == RHO) continue;
+        const Field3D& F = Flux[v];
+        Field3D&       R = Rhs[v];
+        const Index sd = (d == 0 ? 1 : (d == 1 ? F.ldx() : F.ldxy()));
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+#pragma omp simd
+                for (int i = 0; i < nx; ++i) {
+                    const Real* f = &F(i, j, k);
+                    R(i, j, k) += (f[sd] - f[-sd]) * half_inv;
+                }
+    }
+}
+
 void add_viscous_flux_divergence(const State& Flux, int d, Real inv_dh,
                                  State& Rhs) {
     const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
@@ -679,12 +751,16 @@ static void add_rhs_hyperdissipation6(const State& U, const Grid& g,
 
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
                      const ViscousParams& vp, RhsScratch& scratch, State& Rhs) {
-    if (vp.mu > 0.0) {
+    // Cell gradients feed both the physical viscous flux and the LAD sensor.
+    const bool need_grad = (vp.mu > 0.0) || vp.abv_enabled;
+    if (need_grad) {
         compute_cell_gradients(U, g, eos,
                                scratch.prim_u, scratch.prim_v,
                                scratch.prim_w, scratch.prim_T,
                                scratch.G);
+    }
 
+    if (vp.mu > 0.0) {
         State& Flux = scratch.Flux_visc;
 
         fill_viscous_flux_dir(U, scratch.G, vp, eos, 0, Flux);
@@ -699,6 +775,33 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
             add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
         }
     }
+
+    // Localized artificial diffusivity (LAD): compute the coefficient fields
+    // then add their compact-divergence flux. Shares the cell gradients above.
+    if (vp.abv_enabled) {
+        scratch.allocate_abv(U.nx(), U.ny(), U.nz(), U.ng());
+        scratch.abv_nu_max = compute_lad_fields(
+            U, g, eos, vp, scratch.G, scratch.prim_T,
+            scratch.lad_theta, scratch.lad_strain,
+            scratch.mu_art, scratch.beta_art, scratch.kappa_art);
+
+        State& Flux = scratch.Flux_visc;
+        fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
+                                 scratch.kappa_art, 0, Flux);
+        add_compact_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
+        if (U.ny() > 1) {
+            fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
+                                     scratch.kappa_art, 1, Flux);
+            add_compact_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
+        }
+        if (U.nz() > 1) {
+            fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
+                                     scratch.kappa_art, 2, Flux);
+            add_compact_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
+        }
+    }
+
+
     if (vp.hyper_method == HyperMethod::FiniteDifference) {
         add_rhs_hyperdissipation(U, g, vp.hyper_coeff, scratch.lap, Rhs);
         add_rhs_hyperdissipation6(U, g, vp.hyper6_coeff,

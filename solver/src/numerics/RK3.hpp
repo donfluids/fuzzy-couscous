@@ -27,6 +27,11 @@ class RK3 {
 public:
     RK3(int nx, int ny, int nz, int ng);
 
+    // Max effective LAD (artificial diffusivity) kinematic diffusivity seen on
+    // the most recent step, for the viscous CFL constraint (one-step lag).
+    // Zero until the first artificial-diffusivity RHS evaluation.
+    Real last_abv_nu_max() const { return scratch_.abv_nu_max; }
+
     // Inviscid step. Equivalent to step(U, g, bc, eos, {mu=0}, dt).
     void step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
               Real dt);

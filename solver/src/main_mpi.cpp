@@ -139,6 +139,12 @@ int main(int argc, char** argv) {
 
     IdealGas eos{c.physics.eos};
     ViscousParams vp = to_viscous(c.physics, c.bc);
+    // Localized artificial diffusivity (LAD), configured via the [afp] block.
+    vp.abv_enabled      = c.afp.enabled;
+    vp.abv_cbeta        = c.afp.C_beta;
+    vp.abv_cmu          = c.afp.C_mu;
+    vp.abv_ckappa       = c.afp.C_kappa;
+    vp.abv_disable_weno = c.afp.disable_weno;
 
     State U(local_g.nx, local_g.ny, local_g.nz);
     Real start_time = 0.0;
@@ -292,7 +298,18 @@ int main(int argc, char** argv) {
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, local_g, vp, c.time.cfl_viscous, domain.comm())
                     : 1e30;
-        Real dt = std::min({dt_hyp, dt_vis, c.time.dt_max});
+        // LAD viscous limit (one-step lag), reduced across ranks.
+        Real dt_abv = 1e30;
+        if (vp.abv_enabled) {
+            Real num_local = driver.last_abv_nu_max();
+            Real num = num_local;
+            MPI_Allreduce(&num_local, &num, 1, MPI_DOUBLE, MPI_MAX, domain.comm());
+            if (num > 0.0) {
+                const Real dxm = std::min({local_g.dx(), local_g.dy(), local_g.dz()});
+                dt_abv = c.time.cfl_viscous * dxm * dxm / num;
+            }
+        }
+        Real dt = std::min({dt_hyp, dt_vis, dt_abv, c.time.dt_max});
         if (t + dt > c.time.t_end) dt = c.time.t_end - t;
         if (!std::isfinite(dt) || dt <= 0.0) {
             if (world_rank == 0) BLAST_ERROR("non-finite dt at step {}", step);

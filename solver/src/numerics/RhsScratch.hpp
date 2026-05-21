@@ -35,6 +35,18 @@ struct RhsScratch {
     CellGradients G;
     State   Flux_visc;
 
+    // Localized artificial diffusivity (LAD). Allocated lazily on first use
+    // (only when ViscousParams::abv_enabled), so default runs pay nothing.
+    Field3D lad_theta;          // div u source (filled on [-3, n+3))
+    Field3D lad_strain;         // |S| source   (filled on [-3, n+3))
+    Field3D mu_art, beta_art, kappa_art;   // LAD coefficients on [-1, n+1)
+    bool    abv_allocated = false;
+    Real    abv_nu_max    = 0.0;   // max effective LAD diffusivity (for CFL)
+
+    // When true, the Ducros/WENO sensor is zeroed so the central scheme runs
+    // everywhere (LAD-only shock treatment). Set per step by the RK3 driver.
+    bool    disable_weno  = false;
+
     // Hyperdissipation. `lap` holds the first composed Laplacian; `lap2`
     // is the second intermediate for the nabla^6 path and is unused when
     // hyper6_coeff == 0.
@@ -49,6 +61,10 @@ struct RhsScratch {
     // Allocate every buffer for a grid of given local extent + ghost count.
     // Call once per RK3 driver lifetime.
     void allocate(int nx, int ny, int nz, int ng);
+
+    // Lazily allocate the LAD buffers (idempotent). Called from add_rhs_viscous
+    // the first time artificial diffusivity is requested.
+    void allocate_abv(int nx, int ny, int nz, int ng);
 
     // Out-of-line dtor so the unique_ptr<HyperdissipationSpectral> can be
     // declared with a forward-declared payload.

@@ -19,6 +19,7 @@ add_executable(unit_tests
     test_shu_osher_1d.cpp
     test_rogallo.cpp
     test_forcing.cpp
+    test_abv.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

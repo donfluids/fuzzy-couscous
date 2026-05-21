@@ -32,12 +32,18 @@ struct PhysicsConfig {
     HyperMethod hyper_method = HyperMethod::FiniteDifference;
 };
 
+// Localized artificial diffusivity ("artificial fluid properties", Kawai-Lele).
+// Opt-in shock/contact dissipation that lets the central scheme run without
+// WENO. Off by default so existing runs are unchanged. NOTE: the finite-
+// difference path uses a 2nd-derivative sensor (r=2) to fit NGHOST=6; r_order
+// is reserved for a future wider-halo 4th-derivative variant.
 struct AFPConfig {
-    bool enabled  = true;
-    int  r_order  = 4;
-    Real C_mu     = 0.002;
-    Real C_beta   = 1.0;
-    Real C_kappa  = 0.01;
+    bool enabled      = false;
+    int  r_order      = 4;
+    Real C_mu         = 0.002;   // artificial shear
+    Real C_beta       = 1.0;     // artificial bulk (shocks)
+    Real C_kappa      = 0.01;    // artificial thermal conductivity (contacts)
+    bool disable_weno = false;   // suppress Ducros/WENO so LAD is the sole shock sink
 };
 
 struct TimeConfig {

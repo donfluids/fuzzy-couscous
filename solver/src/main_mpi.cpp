@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
     if (world_rank == 0) {
         stats_file.open(c.output.out_dir + "/" + c.run_name + "_stats.csv");
         stats_file << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,"
-                     "T_mean,omega2,div2,eps_total,eps_sol,eps_dil\n";
+                     "T_mean,omega2,div2,eps_total,eps_sol,eps_dil,e_total,e_int\n";
     }
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
@@ -282,7 +282,8 @@ int main(int argc, char** argv) {
                        << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
                        << s.c_mean << ',' << s.rho_mean << ',' << s.p_mean << ','
                        << s.T_mean << ',' << b.omega2_mean << ',' << b.div2_mean << ','
-                       << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << '\n';
+                       << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
+                       << s.e_total << ',' << s.e_int << '\n';
             stats_file.flush();
             BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
                        "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e}",

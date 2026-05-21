@@ -93,7 +93,7 @@ ViscousParams to_viscous(const PhysicsConfig& p, const BCSet& bc) {
 
 void log_header(std::ostream& os) {
     os << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,T_mean,"
-          "omega2,div2,eps_total,eps_sol,eps_dil,K_sol,K_dil\n";
+          "omega2,div2,eps_total,eps_sol,eps_dil,K_sol,K_dil,e_total,e_int\n";
 }
 
 void log_row(std::ostream& os, int step, Real t, Real dt,
@@ -104,7 +104,8 @@ void log_row(std::ostream& os, int step, Real t, Real dt,
        << s.c_mean << ',' << s.rho_mean << ',' << s.p_mean << ',' << s.T_mean << ','
        << b.omega2_mean << ',' << b.div2_mean << ','
        << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
-       << h.K_sol << ',' << h.K_dil << '\n';
+       << h.K_sol << ',' << h.K_dil << ','
+       << s.e_total << ',' << s.e_int << '\n';
 }
 
 }  // namespace
@@ -229,9 +230,16 @@ int main(int argc, char** argv) {
 
     FFT3DPlan fft(c.grid.nx, c.grid.ny, c.grid.nz);
 
+    // Total-energy conservation monitor: <rho E> should stay constant for a
+    // closed chamber (no forcing); the relative drift dE/E0 flags any
+    // non-conservation (boundary leakage or a non-conservative term).
+    Real e_total_0 = 0.0;
+    bool e0_set = false;
     auto write_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos);
         auto b = dissipation_budget(U, c.grid, eos, vp);
+        if (!e0_set) { e_total_0 = s.e_total; e0_set = true; }
+        const Real e_drift = (e_total_0 != 0.0) ? s.e_total / e_total_0 - 1.0 : 0.0;
         HelmholtzResult h{};
         ShellSpectrum sp{};
         if (c.output.write_helmholtz || c.output.write_spectra)
@@ -243,10 +251,12 @@ int main(int argc, char** argv) {
         log_row(stats_file, step, t, dt, s, b, h);
         stats_file.flush();
         BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
-                   "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e}",
+                   "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
+                   "e_tot={:.6e} dE/E0={:+.2e}",
                    step, t, dt, s.ke_total, s.tke, s.M_t,
                    b.eps_sol, b.eps_dil,
-                   (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0));
+                   (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
+                   s.e_total, e_drift);
     };
 
     Real t = start_time;

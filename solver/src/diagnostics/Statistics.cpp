@@ -13,10 +13,10 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos) {
 
     Real sum_u[3] = {0, 0, 0};
     Real sum_rho = 0, sum_p = 0, sum_T = 0, sum_c = 0;
-    Real sum_ke = 0;
+    Real sum_ke = 0, sum_E = 0;
 
 #pragma omp parallel for collapse(2) schedule(static) \
-    reduction(+:sum_u[:3],sum_rho,sum_p,sum_T,sum_c,sum_ke)
+    reduction(+:sum_u[:3],sum_rho,sum_p,sum_T,sum_c,sum_ke,sum_E)
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
@@ -36,6 +36,7 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos) {
                 sum_T    += T;
                 sum_c    += c;
                 sum_ke   += ke;
+                sum_E    += U[RHOE](i, j, k);   // total energy density rho E
             }
 
     VelocityStats s{};
@@ -46,6 +47,8 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos) {
     s.T_mean   = sum_T   * inv_N;
     s.c_mean   = sum_c   * inv_N;
     s.ke_total = sum_ke  * inv_N;
+    s.e_total  = sum_E   * inv_N;          // < rho E >  (conserved monitor)
+    s.e_int    = s.e_total - s.ke_total;   // < rho e_int >
 
     // Second pass: fluctuations after removing the mean.
     Real sum_up2 = 0, sum_tke = 0;
@@ -136,8 +139,8 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos,
                              long long N_global, MPI_Comm comm) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
 
-    Real sum[8] = {0, 0, 0, 0, 0, 0, 0, 0};   // u, v, w, rho, p, T, c, ke
-#pragma omp parallel for collapse(2) schedule(static) reduction(+:sum[:8])
+    Real sum[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};  // u, v, w, rho, p, T, c, ke, rhoE
+#pragma omp parallel for collapse(2) schedule(static) reduction(+:sum[:9])
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
@@ -152,8 +155,9 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos,
                 sum[5] += eos.temperature(r, p);
                 sum[6] += eos.sound_speed(r, p);
                 sum[7] += ke;
+                sum[8] += U[RHOE](i, j, k);   // total energy density
             }
-    MPI_Allreduce(MPI_IN_PLACE, sum, 8, MPI_DOUBLE, MPI_SUM, comm);
+    MPI_Allreduce(MPI_IN_PLACE, sum, 9, MPI_DOUBLE, MPI_SUM, comm);
 
     VelocityStats s{};
     const Real inv_N = 1.0 / static_cast<Real>(N_global);
@@ -165,6 +169,8 @@ VelocityStats velocity_stats(const State& U, const IdealGas& eos,
     s.T_mean    = sum[5] * inv_N;
     s.c_mean    = sum[6] * inv_N;
     s.ke_total  = sum[7] * inv_N;
+    s.e_total   = sum[8] * inv_N;
+    s.e_int     = s.e_total - s.ke_total;
 
     Real fluc[2] = {0, 0};
 #pragma omp parallel for collapse(2) schedule(static) reduction(+:fluc[:2])

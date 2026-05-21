@@ -71,15 +71,22 @@ def main() -> int:
         c = cmap(i / max(1, len(wanted) - 1))
         k = d["k"]
         if args.solenoidal:
-            # Energy magnitude: annotate the dilatational fraction K_dil/K_tot.
-            frac = integrated_energy(k, d["E_dil"]) / max(
-                integrated_energy(k, d["E_total"]), 1e-30)
-            label = f"t={d['time']:.3e} ($K_{{dil}}/K_{{tot}}$={frac:.2f})"
+            # Energy magnitude: annotate both component fractions (sol + dil = tot).
+            Kt = max(integrated_energy(k, d["E_total"]), 1e-30)
+            fsol = integrated_energy(k, d["E_sol"]) / Kt
+            fdil = integrated_energy(k, d["E_dil"]) / Kt
+            label = (f"t={d['time']:.3e} "
+                     f"($K_{{sol}}/K_{{tot}}$={fsol:.2f}, "
+                     f"$K_{{dil}}/K_{{tot}}$={fdil:.2f})")
             ax.loglog(k[1:], d["E_sol"][1:], "--", color=c, alpha=0.5)
             ax.loglog(k[1:], d["E_dil"][1:], ":", color=c, alpha=0.5)
-            # Turbulence shape: local slope of the total spectrum.
-            kk, sl = local_slope(k, d["E_total"])
-            axs.semilogx(kk, sl, "-", color=c, lw=1.6)
+            # Turbulence shape: per-component local slope. Linestyle encodes the
+            # component (solid total, -- sol, : dil), matching the energy panel;
+            # color still encodes time.
+            for E, ls in ((d["E_total"], "-"), (d["E_sol"], "--"), (d["E_dil"], ":")):
+                kk, sl = local_slope(k, E)
+                axs.semilogx(kk, sl, ls, color=c, lw=1.6,
+                             alpha=0.9 if ls == "-" else 0.6)
         else:
             label = f"t={d['time']:.3e}"
         ax.loglog(k[1:], d["E_total"][1:], "-", color=c, label=label)
@@ -107,8 +114,8 @@ def main() -> int:
 
     if axs is not None:
         axs.set_xlabel("k")
-        axs.set_ylabel(r"local slope $d\log E_{tot}/d\log k$")
-        axs.set_title("turbulence: total spectral slope")
+        axs.set_ylabel(r"local slope $d\log E/d\log k$")
+        axs.set_title("turbulence: spectral slope (solid total, -- sol, : dil)")
         axs.set_ylim(-4, 3)
         axs.legend(fontsize=8, loc="upper right")
         axs.grid(True, which="both", alpha=0.3)

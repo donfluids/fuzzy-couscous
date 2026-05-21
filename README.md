@@ -132,6 +132,18 @@ not be conflated:
 (energy block + turbulence block) and is the shared shape/energy utility behind
 `scripts/spectrum_components.py` and `tools/plot_spectra.py --solenoidal`.
 
+The dilatational field itself further contains **pseudo-sound** (the dilatation
+slaved to the vortical turbulence — genuine *dilatational turbulence*) and
+**true sound** (freely-propagating / closed-chamber standing acoustics).
+`scripts/pseudosound_split.py` separates them from the full-field snapshots via a
+pressure Poisson solve sourced by the *solenoidal* velocity
+(`∇²p_h = -∂_i∂_j(ρ u_s,i u_s,j)`; acoustic `p_a = p' - p_h`), and reports the
+pseudo-sound/acoustic pressure variances and spectra. For the blast runs the
+compressible field is ~100% acoustic with negligible pseudo-sound — consistent
+with the weak vortical turbulence and the absence of any `k^-5/3` cascade. (KE
+attribution via equipartition is an estimate; the pressure split is exact. See
+the script header for caveats — low-Mach validity, shocklets, periodic basis.)
+
 ## Test suite (44 serial + 4 MPI binaries × 3 rank counts, all passing)
 
 | Suite | What it verifies | Wall (9965 est.) |

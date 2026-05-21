@@ -13,9 +13,17 @@ and a `ν_h ∇⁴ U` hyperdissipation term as the LES sink at high wavenumbers.
 ```
 solver/             C++ source, CMake build, GoogleTest suite
 solver/examples/    runnable TOML configs (TGV, chamber, paper Case 1, ...)
+scripts/            Python analysis & diagnostics (reads runs/ and data/)
 tools/              Python post-processing (decay fits, spectra plots, ensemble avg)
+runs/               simulation output dirs (out_*/: HDF5 snapshots, stats CSV, spectra) — gitignored
+data/               derived data products (.npz) and run logs (.log) — gitignored
 paper/figures/      committed figures for the manuscript revisions
 ```
+
+Run outputs live under `runs/` (one `out_*/` directory per run) and the
+analysis scripts in `scripts/` resolve them via `RUNS = ROOT/"runs"` and
+`DATA = ROOT/"data"`. Both `runs/` and `data/` hold regenerable artifacts
+and are gitignored.
 
 ## Build & test
 

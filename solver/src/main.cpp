@@ -95,12 +95,12 @@ ViscousParams to_viscous(const PhysicsConfig& p, const BCSet& bc) {
 void log_header(std::ostream& os) {
     os << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,T_mean,"
           "omega2,div2,eps_total,eps_sol,eps_dil,K_sol,K_dil,e_total,e_int,"
-          "mom_x,mom_y,mom_z\n";
+          "mom_x,mom_y,mom_z,E_ratio,M_ratio\n";
 }
 
 void log_row(std::ostream& os, int step, Real t, Real dt,
              const VelocityStats& s, const DissipationBudget& b,
-             const HelmholtzResult& h) {
+             const HelmholtzResult& h, Real e_ratio, Real m_ratio) {
     os << step << ',' << t << ',' << dt << ','
        << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
        << s.c_mean << ',' << s.rho_mean << ',' << s.p_mean << ',' << s.T_mean << ','
@@ -108,7 +108,8 @@ void log_row(std::ostream& os, int step, Real t, Real dt,
        << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
        << h.K_sol << ',' << h.K_dil << ','
        << s.e_total << ',' << s.e_int << ','
-       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << '\n';
+       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << ','
+       << e_ratio << ',' << m_ratio << '\n';
 }
 
 }  // namespace
@@ -235,17 +236,20 @@ int main(int argc, char** argv) {
     FFT3DPlan fft(c.grid.nx, c.grid.ny, c.grid.nz);
 
     // Conservation monitors: for a closed chamber (no forcing) both the total
-    // energy <rho E> and the total mass <rho> are constant; the relative drifts
-    // dE/E0, dM/M0 flag any non-conservation (boundary leakage, a
-    // non-conservative term, or incipient instability).
+    // energy <rho E> and the total mass <rho> are constant. We report the ratios
+    // E/E0 and M/M0 (==1 to round-off when conserved) and their drifts
+    // dE/E0 = E/E0 - 1, dM/M0 = M/M0 - 1, which flag any non-conservation
+    // (boundary leakage, a non-conservative term, or incipient instability).
     Real e_total_0 = 0.0, rho_mean_0 = 0.0;
     bool cons0_set = false;
     auto write_diagnostics = [&](int step, Real t, Real dt) {
         auto s = velocity_stats(U, eos);
         auto b = dissipation_budget(U, c.grid, eos, vp);
         if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
-        const Real e_drift = (e_total_0 != 0.0) ? s.e_total / e_total_0 - 1.0 : 0.0;
-        const Real m_drift = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 - 1.0 : 0.0;
+        const Real e_ratio = (e_total_0 != 0.0) ? s.e_total / e_total_0 : 1.0;
+        const Real m_ratio = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 : 1.0;
+        const Real e_drift = e_ratio - 1.0;
+        const Real m_drift = m_ratio - 1.0;
         // Momentum imbalance: |<rho u>| / (<rho> <c>), dimensionless. ~0 for a
         // periodic or symmetric closed-chamber run; growth flags asymmetry.
         const Real pmag = std::sqrt(s.mom[0]*s.mom[0] + s.mom[1]*s.mom[1]
@@ -259,15 +263,16 @@ int main(int argc, char** argv) {
             sp = velocity_spectrum(U, c.grid, fft);
             writer.append_spectra(h, sp, t, step);
         }
-        log_row(stats_file, step, t, dt, s, b, h);
+        log_row(stats_file, step, t, dt, s, b, h, e_ratio, m_ratio);
         stats_file.flush();
         BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
                    "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
-                   "e_tot={:.6e} dE/E0={:+.2e} dM/M0={:+.2e} |p|/rhoc={:.2e}",
+                   "e_tot={:.6e} E/E0={:.12f} dE/E0={:+.2e} "
+                   "M/M0={:.12f} dM/M0={:+.2e} |p|/rhoc={:.2e}",
                    step, t, dt, s.ke_total, s.tke, s.M_t,
                    b.eps_sol, b.eps_dil,
                    (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
-                   s.e_total, e_drift, m_drift, p_imbalance);
+                   s.e_total, e_ratio, e_drift, m_ratio, m_drift, p_imbalance);
     };
 
     Real t = start_time;

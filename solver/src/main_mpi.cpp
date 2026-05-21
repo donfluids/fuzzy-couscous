@@ -215,7 +215,7 @@ int main(int argc, char** argv) {
         stats_file << std::setprecision(12);   // resolve conservation drift in the CSV
         stats_file << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,"
                      "T_mean,omega2,div2,eps_total,eps_sol,eps_dil,e_total,e_int,"
-                     "mom_x,mom_y,mom_z\n";
+                     "mom_x,mom_y,mom_z,E_ratio,M_ratio\n";
     }
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
@@ -258,8 +258,10 @@ int main(int argc, char** argv) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
         auto b = dissipation_budget(U, local_g, eos, vp, N_global, domain.comm());
         if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
-        const Real e_drift = (e_total_0 != 0.0) ? s.e_total / e_total_0 - 1.0 : 0.0;
-        const Real m_drift = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 - 1.0 : 0.0;
+        const Real e_ratio = (e_total_0 != 0.0) ? s.e_total / e_total_0 : 1.0;
+        const Real m_ratio = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 : 1.0;
+        const Real e_drift = e_ratio - 1.0;
+        const Real m_drift = m_ratio - 1.0;
         const Real pmag = std::sqrt(s.mom[0]*s.mom[0] + s.mom[1]*s.mom[1]
                                     + s.mom[2]*s.mom[2]);
         const Real p_imbalance = pmag / std::max(s.rho_mean * s.c_mean, 1e-30);
@@ -295,15 +297,17 @@ int main(int argc, char** argv) {
                        << s.T_mean << ',' << b.omega2_mean << ',' << b.div2_mean << ','
                        << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
                        << s.e_total << ',' << s.e_int << ','
-                       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << '\n';
+                       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << ','
+                       << e_ratio << ',' << m_ratio << '\n';
             stats_file.flush();
             BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
                        "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
-                       "e_tot={:.6e} dE/E0={:+.2e} dM/M0={:+.2e} |p|/rhoc={:.2e}",
+                       "e_tot={:.6e} E/E0={:.12f} dE/E0={:+.2e} "
+                       "M/M0={:.12f} dM/M0={:+.2e} |p|/rhoc={:.2e}",
                        step, t, dt, s.ke_total, s.tke, s.M_t,
                        b.eps_sol, b.eps_dil,
                        (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
-                       s.e_total, e_drift, m_drift, p_imbalance);
+                       s.e_total, e_ratio, e_drift, m_ratio, m_drift, p_imbalance);
         }
     };
 

@@ -154,6 +154,12 @@ int main(int argc, char** argv) {
     vp.abv_ckappa       = c.afp.C_kappa;
     vp.abv_cD           = c.afp.C_D;
     vp.abv_disable_weno = c.afp.disable_weno;
+    // compact10 needs a global line solve; the distributed line solver is not
+    // implemented yet, so fall back to central6 in MPI (warn once on rank 0).
+    vp.use_compact10 = false;
+    if (c.physics.flux_compact10 && world_rank == 0)
+        BLAST_WARN("flux_scheme = \"compact10\" is serial-only; the MPI run "
+                   "falls back to central6");
 
     State U(local_g.nx, local_g.ny, local_g.nz);
     Real start_time = 0.0;

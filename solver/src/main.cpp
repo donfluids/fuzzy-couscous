@@ -145,6 +145,9 @@ int main(int argc, char** argv) {
     vp.abv_ckappa       = c.afp.C_kappa;
     vp.abv_cD           = c.afp.C_D;
     vp.abv_disable_weno = c.afp.disable_weno;
+    vp.use_compact10    = c.physics.flux_compact10;
+    if (vp.use_compact10)
+        BLAST_INFO("inviscid flux: 10th-order conservative compact (smooth) + WENO5 (shocks)");
     if (vp.abv_enabled)
         BLAST_INFO("LAD on: C_beta={} C_mu={} C_kappa={} disable_weno={}",
                    vp.abv_cbeta, vp.abv_cmu, vp.abv_ckappa, vp.abv_disable_weno);

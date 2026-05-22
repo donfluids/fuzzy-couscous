@@ -101,6 +101,17 @@ Config load_config(const std::string& path) {
     c.physics.hyper6_coeff = pick<double>(ph["hyper6_coeff"], c.physics.hyper6_coeff);
     if (auto s = ph["hyper_method"].value<std::string>())
         c.physics.hyper_method = parse_hyper_method(*s);
+    if (auto s = ph["flux_scheme"].value<std::string>()) {
+        if (*s == "compact10")     c.physics.flux_compact10 = true;
+        else if (*s == "central6") c.physics.flux_compact10 = false;
+        else throw std::runtime_error(
+            "flux_scheme must be \"central6\" or \"compact10\"");
+    }
+    if (c.physics.flux_compact10 && c.bc.all_periodic()) {
+        throw std::runtime_error(
+            "flux_scheme = \"compact10\" uses a slip-wall boundary closure and "
+            "is not supported for all-periodic BCs yet");
+    }
 
     if (c.physics.hyper_method == HyperMethod::Pseudospectral
         && !c.bc.all_periodic() && !c.bc.all_slip_wall()) {

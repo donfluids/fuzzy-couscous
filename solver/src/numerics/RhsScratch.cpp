@@ -1,5 +1,6 @@
 #include "numerics/RhsScratch.hpp"
 
+#include "numerics/CompactScheme.hpp"
 #include "numerics/HyperdissipationSpectral.hpp"
 
 namespace blast {

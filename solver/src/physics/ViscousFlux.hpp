@@ -75,6 +75,10 @@ struct ViscousParams {
     // everywhere) so LAD is the sole shock treatment. Only meaningful with
     // abv_enabled.
     bool abv_disable_weno = false;
+    // When true, smooth-region inviscid flux uses the 10th-order conservative
+    // compact reconstruction (Lele penta) instead of explicit central6; shock
+    // faces still go to WENO5.
+    bool use_compact10 = false;
 };
 
 // Local 3x3 velocity gradient at a cell, dudx[v][d] = d u_v / d x_d,

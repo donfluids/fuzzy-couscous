@@ -30,6 +30,12 @@ struct PhysicsConfig {
     // composed Laplacian stencils; "spectral" uses an exact FFT operator
     // and requires all-periodic BCs (validated at config load) and serial.
     HyperMethod hyper_method = HyperMethod::FiniteDifference;
+    // Inviscid flux reconstruction in smooth regions: false -> explicit
+    // 6th-order central (default); true -> 10th-order conservative compact
+    // (Lele pentadiagonal). Shock faces always go to WENO5. The compact path
+    // uses a slip-wall boundary closure, so it is currently restricted to
+    // non-(all-periodic) BCs (validated at config load).
+    bool flux_compact10 = false;
 };
 
 // Localized artificial diffusivity ("artificial fluid properties", Kawai-Lele).

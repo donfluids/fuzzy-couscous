@@ -2,6 +2,7 @@
 
 #include "core/Field3D.hpp"
 #include "numerics/ArtificialDiffusivity.hpp"
+#include "numerics/CompactScheme.hpp"
 #include "numerics/Ducros.hpp"
 #include "numerics/Gradients.hpp"
 #include "numerics/HyperdissipationSpectral.hpp"
@@ -14,7 +15,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <omp.h>
+#include <vector>
 
 namespace blast {
 
@@ -315,6 +318,80 @@ void add_face_flux_divergence(const State& U, const State& Flux,
     }
 }
 
+// Line-oriented hybrid divergence: 10th-order conservative compact reconstruction
+// in smooth regions, WENO5 at shock-flagged faces. Per line along d we solve the
+// compact pentadiagonal system for all face fluxes, override shock faces with the
+// Lax-Friedrichs WENO flux, then take the conservative difference. Each face
+// carries exactly one value (shared by both neighbours) so conservation
+// telescopes bit-for-bit, identical to the explicit central6 path.
+void add_face_flux_divergence_compact(const State& U, const State& Flux,
+                                      const Field3D& alpha, const Field3D& theta,
+                                      int d, Real inv_h, State& Rhs,
+                                      const CompactPenta& cp) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const int nL  = (d == 0 ? nx : d == 1 ? ny : nz);
+    const int nt1 = (d == 0 ? ny : nx);              // first transverse extent
+    const int nt2 = (d == 0 ? nz : d == 1 ? nz : ny);  // second transverse extent
+    constexpr int NG = kCompactGhost;                // gather halo
+
+    auto IJK = [d](int m, int t1, int t2, int& i, int& j, int& k) {
+        if (d == 0)      { i = m;  j = t1; k = t2; }
+        else if (d == 1) { i = t1; j = m;  k = t2; }
+        else             { i = t1; j = t2; k = m;  }
+    };
+
+#pragma omp parallel
+    {
+        std::vector<Real> Fb[NCONS], Qb[NCONS], fc[NCONS];
+        for (int v = 0; v < NCONS; ++v) {
+            Fb[v].resize(nL + 2 * NG);
+            Qb[v].resize(nL + 2 * NG);
+            fc[v].resize(nL + 1);
+        }
+        std::vector<Real> ab(nL + 2 * NG), tb(nL + 2 * NG);
+
+#pragma omp for collapse(2) schedule(static)
+        for (int t2 = 0; t2 < nt2; ++t2)
+            for (int t1 = 0; t1 < nt1; ++t1) {
+                // Gather the line (node fluxes, conserved state, alpha, sensor)
+                // with NG ghosts into contiguous buffers.
+                for (int m = -NG; m < nL + NG; ++m) {
+                    int i, j, k; IJK(m, t1, t2, i, j, k);
+                    const Index off = Flux[0].idx_(i, j, k);
+                    for (int v = 0; v < NCONS; ++v) {
+                        Fb[v][m + NG] = Flux[v].raw()[off];
+                        Qb[v][m + NG] = U[v].raw()[off];
+                    }
+                    ab[m + NG] = alpha.raw()[off];
+                    tb[m + NG] = theta.raw()[off];
+                }
+                // Compact reconstruction (node ptr = cell 0 = buf + NG).
+                for (int v = 0; v < NCONS; ++v)
+                    cp.reconstruct_wall(Fb[v].data() + NG, fc[v].data());
+                // Override shock faces with WENO5 (LF split). Face f sits between
+                // cells f-1 and f; the sensor is dilated so the cell max covers
+                // the stencil footprint.
+                for (int f = 0; f <= nL; ++f) {
+                    const Real th = std::max(tb[NG + f - 1], tb[NG + f]);
+                    if (th > kSensorThreshold) {
+                        const Real af = std::max(ab[NG + f - 1], ab[NG + f]);
+                        for (int v = 0; v < NCONS; ++v)
+                            fc[v][f] = face_flux(Fb[v].data() + NG + (f - 1),
+                                                 Qb[v].data() + NG + (f - 1),
+                                                 af, 1, true);
+                    }
+                }
+                // Conservative difference.
+                for (int m = 0; m < nL; ++m) {
+                    int i, j, k; IJK(m, t1, t2, i, j, k);
+                    const Index off = Rhs[0].idx_(i, j, k);
+                    for (int v = 0; v < NCONS; ++v)
+                        Rhs[v].raw()[off] -= (fc[v][m + 1] - fc[v][m]) * inv_h;
+                }
+            }
+    }
+}
+
 }  // namespace
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
@@ -380,6 +457,16 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
             // single-fluid cells; frozen-gamma recompute only near a contact.
             add_inviscid_divergence_mf(U, Flux, alpha, theta_dil, *gfn, contact,
                                        d, inv_h, Rhs);
+        } else if (scratch.use_compact) {
+            // 10th-order conservative compact reconstruction (smooth) + WENO5
+            // (shocks). Build/cache the per-direction pentadiagonal solver.
+            const int nL = (d == 0 ? U.nx() : d == 1 ? U.ny() : U.nz());
+            auto& slot = (d == 0 ? scratch.compact_x
+                                 : d == 1 ? scratch.compact_y
+                                          : scratch.compact_z);
+            if (!slot || slot->n() != nL) slot = std::make_unique<CompactPenta>(nL);
+            add_face_flux_divergence_compact(U, Flux, alpha, theta_dil, d, inv_h,
+                                             Rhs, *slot);
         } else {
             add_face_flux_divergence(U, Flux, alpha, theta_dil, d, inv_h, Rhs);
         }

@@ -185,10 +185,13 @@ int main(int argc, char** argv) {
     BCSet bc = c.bc;
     apply_bcs(U, bc);
 
-    // Two-gamma multifluid: G = 1/(gamma-1) field carries dense-products vs air.
+    // Multifluid: an advected marker field carries products vs air identity.
+    // two_gamma -> G = 1/(gamma-1); jwl -> products mass fraction phi in [0,1].
     Field3D Gfield(c.grid.nx, c.grid.ny, c.grid.nz);
     Gfield.fill(1.0 / (c.physics.eos.gamma - 1.0));
     const Field3D* gptr = nullptr;
+    MixtureEOS mixEOS;
+    const MixtureEOS* mixptr = nullptr;   // JWL only; two-gamma keeps the legacy path
     if (c.multifluid.enabled) {
         MultifluidParams mp;
         mp.enabled = true;
@@ -200,12 +203,45 @@ int main(int argc, char** argv) {
         mp.q = c.multifluid.q; mp.rho_e = c.multifluid.rho_e; mp.T_e = c.multifluid.T_e;
         mp.cj_u_frac = c.multifluid.cj_u_frac;
         mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
+        if (c.multifluid.eos == "jwl") {
+            // Nondimensionalize the SI JWL constants + CJ/ambient states so the
+            // solver sees O(1) products (rho_ref/p_ref default to 1.0 = no-op).
+            const Real pr = c.multifluid.p_ref, rr = c.multifluid.rho_ref;
+            mp.jwl_mode  = true;
+            mp.jwl.A     = c.multifluid.jwl_A / pr;
+            mp.jwl.B     = c.multifluid.jwl_B / pr;
+            mp.jwl.R1    = c.multifluid.jwl_R1;
+            mp.jwl.R2    = c.multifluid.jwl_R2;
+            mp.jwl.omega = c.multifluid.jwl_omega;
+            mp.jwl.rho0  = c.multifluid.jwl_rho0 / rr;
+            mp.jwl.E0    = c.multifluid.jwl_E0 / pr;
+            mp.rho_cj    = c.multifluid.rho_cj / rr;
+            mp.p_cj      = c.multifluid.p_cj   / pr;
+            mp.rho_a     = c.multifluid.rho_a  / rr;
+            mp.p_a       = c.multifluid.p_a_jwl / pr;
+            mp.phi_switch = c.multifluid.phi_switch;
+            Gfield.fill(0.0);            // phi marker: default to air outside the IC
+        }
         mf_init_blast(U, Gfield, c.grid, mp);
-        mf_fill_G_bcs(Gfield, bc);   // valid G ghosts for the first RHS
+        mf_fill_G_bcs(Gfield, bc);   // valid marker ghosts for the first RHS
         apply_bcs(U, bc);
         gptr = &Gfield;
-        BLAST_INFO("multifluid ON: products gamma={} rho={} T={} vs air gamma={} rho={}",
-                   mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
+        if (mp.jwl_mode) {
+            mixEOS = mp.mixture();
+            mixptr = &mixEOS;
+            // Scale the positivity floors to the (nondim) ambient air state so a
+            // ~1000:1 contrast never lets the floor clip real air.
+            vp.rho_floor  = 1e-3 * mp.rho_a;
+            vp.eint_floor = 1e-3 * (mp.p_a / (mp.gamma_air - 1.0));
+            BLAST_INFO("multifluid ON (JWL): products rho_cj={} p_cj={} (nondim) "
+                       "A={} B={} R1={} R2={} omega={} vs air rho={} p={}",
+                       mp.rho_cj, mp.p_cj, mp.jwl.A, mp.jwl.B, mp.jwl.R1,
+                       mp.jwl.R2, mp.jwl.omega, mp.rho_a, mp.p_a);
+        } else {
+            BLAST_INFO("multifluid ON (two-gamma): products gamma={} rho={} T={} "
+                       "vs air gamma={} rho={}",
+                       mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
+        }
     }
 
     // BHR variable-density turbulence model (operator-split sub-step).
@@ -311,13 +347,13 @@ int main(int argc, char** argv) {
     Real t = start_time;
     int step = start_step;
     write_diagnostics(step, t, 0.0, /*do_spectra=*/true);
-    writer.write_snapshot(U, c.grid, eos, t, step, gptr);
+    writer.write_snapshot(U, c.grid, eos, t, step, gptr, mixptr);
 
     const std::string ckpt_path =
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
-        Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic, gptr);
+        Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic, gptr, mixptr);
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, c.grid, vp, c.time.cfl_viscous)
                     : 1e30;
@@ -344,7 +380,7 @@ int main(int argc, char** argv) {
             break;
         }
 
-        driver.step(U, c.grid, bc, eos, vp, dt, gptr);
+        driver.step(U, c.grid, bc, eos, vp, dt, gptr, mixptr);
         if (gptr) mf_advect_G(Gfield, U, c.grid, bc, dt);
         if (forcing) {
             forcing->evolve_ou(dt);
@@ -378,7 +414,7 @@ int main(int argc, char** argv) {
             }
             if (do_stats && gptr) {
                 Real pmn, pmx;
-                mf_pressure_minmax(U, Gfield, pmn, pmx);
+                mf_pressure_minmax(U, Gfield, pmn, pmx, mixptr);
                 const GStats gs = mf_g_stats(Gfield);
                 BLAST_INFO("  multifluid p in [{:.3e}, {:.3e}]  "
                            "G in [{:.4f}, {:.4f}] var={:.3e}",
@@ -386,7 +422,7 @@ int main(int argc, char** argv) {
             }
         }
         if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every)) {
-            writer.write_snapshot(U, c.grid, eos, t, step, gptr);
+            writer.write_snapshot(U, c.grid, eos, t, step, gptr, mixptr);
             if (bp.enabled) {
                 bhr_write_radial_profiles(U, turb, c.grid,
                     c.output.out_dir + "/" + c.run_name + "_bhrprof_"

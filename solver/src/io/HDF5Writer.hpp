@@ -4,6 +4,7 @@
 #include "core/State.hpp"
 #include "diagnostics/Spectra.hpp"
 #include "physics/EOS.hpp"
+#include "physics/MixtureEOS.hpp"
 
 #ifdef BLAST_MPI
 #include "parallel/Domain.hpp"
@@ -28,11 +29,13 @@ class HDF5Writer {
 public:
     HDF5Writer(const std::string& out_dir, const std::string& run_name);
 
-    // gfn (optional): two-gamma multifluid G=1/(gamma-1). When provided, the
-    // snapshot pressure is computed with the LOCAL gamma, p=(rhoE-ke)/G, so the
-    // products region is correct (temperature is unaffected -- shared R).
+    // gfn (optional): multifluid marker field. When provided, the snapshot
+    // pressure uses the local EOS: two-gamma p=(rhoE-ke)/G, or (with a JWL mix)
+    // the JWL products EOS. Temperature uses the ideal-gas relation (a JWL
+    // products temperature needs a caloric model -- placeholder for now).
     void write_snapshot(const State& U, const Grid& g, const IdealGas& eos,
-                        Real t, int step, const Field3D* gfn = nullptr);
+                        Real t, int step, const Field3D* gfn = nullptr,
+                        const MixtureEOS* mix = nullptr);
 
     // Append per-step spectra to <run_name>_spectra.h5 under /step_<NNNNNN>/.
     // Each entry holds time, k, E_total, E_sol, E_dil 1D datasets.

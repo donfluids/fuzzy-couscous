@@ -19,12 +19,13 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
 }
 
 void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
-               const ViscousParams& vp, Real dt, const Field3D* gfn) {
+               const ViscousParams& vp, Real dt, const Field3D* gfn,
+               const MixtureEOS* mix) {
     scratch_.disable_weno = vp.abv_disable_weno;
     scratch_.use_compact  = vp.use_compact10;
     scratch_.mf_conservative = vp.mf_conservative;
     auto eval_rhs = [&](const State& Uin) {
-        compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn);
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn, mix);
         if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
             || vp.abv_enabled)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
@@ -33,8 +34,10 @@ void RK3::step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
     // Positivity floor only when running multifluid (gfn != nullptr): a strong
     // variable-gamma contact / rarefaction can overshoot to negative rho or p.
     // Single-gas runs (gfn == nullptr) skip this and stay bit-identical.
+    // Floors come from vp (defaults match the historical two-gamma constants;
+    // the driver scales them to the ambient state for strong-contrast JWL).
     const bool floor = (gfn != nullptr);
-    constexpr Real kRhoFloor = 1e-5, kEintFloor = 1e-6;
+    const Real kRhoFloor = vp.rho_floor, kEintFloor = vp.eint_floor;
 
     apply_bcs(U, bc);
     eval_rhs(U);
@@ -88,14 +91,15 @@ void RK3::init_spectral_hyper_mpi(const Grid& global_grid, const Domain& d,
 
 void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                    const ViscousParams& vp, Real dt,
-                   const Domain& d, Halo& halo, const Field3D* gfn) {
+                   const Domain& d, Halo& halo, const Field3D* gfn,
+                   const MixtureEOS* mix) {
     scratch_.disable_weno = vp.abv_disable_weno;
     scratch_.use_compact  = vp.use_compact10;
     scratch_.mf_conservative = vp.mf_conservative;
     auto eval_rhs = [&](State& Uin) {
         halo.exchange(Uin);
         apply_bcs(Uin, bc, d);
-        compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn);
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn, mix);
         if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
             || vp.abv_enabled)
             add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
@@ -104,8 +108,8 @@ void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos
     // Positivity floor only for multifluid (gfn != nullptr): a strong
     // variable-gamma contact can overshoot to negative rho or p. Single-gas
     // runs stay bit-identical (no floor). Mirrors the serial step().
+    const Real kRhoFloor = vp.rho_floor, kEintFloor = vp.eint_floor;
     const bool floor = (gfn != nullptr);
-    constexpr Real kRhoFloor = 1e-5, kEintFloor = 1e-6;
 
     eval_rhs(U);
     state_axpby(U1_, 1.0, U, dt, k_);

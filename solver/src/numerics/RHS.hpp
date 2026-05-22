@@ -4,6 +4,7 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 #include "physics/EOS.hpp"
+#include "physics/MixtureEOS.hpp"
 #include "physics/ViscousFlux.hpp"
 
 #ifdef BLAST_MPI
@@ -21,13 +22,18 @@ struct RhsScratch;  // numerics/RhsScratch.hpp
 // tests and ad-hoc calls); the scratch-aware one uses pre-allocated buffers
 // from RhsScratch, which is how RK3 wires it in production (avoids ~1.5 GB
 // of allocator + first-touch traffic per step at 256^3).
-// gfn (optional): per-cell G = 1/(gamma-1) field for a two-gamma multifluid.
-// nullptr -> single ideal gas (eos.gamma everywhere; existing behavior).
+// gfn (optional): per-cell marker field for a multifluid (two-gamma G, or a JWL
+// products mass fraction). nullptr -> single ideal gas (eos.gamma everywhere;
+// existing behavior).
+// mix (optional): marker-selected mixture EOS (TwoGamma or air+JWL). nullptr
+// with a non-null gfn keeps the original two-gamma arithmetic (gloc = 1 + 1/G).
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          State& Rhs, const Field3D* gfn = nullptr);
+                          State& Rhs, const Field3D* gfn = nullptr,
+                          const MixtureEOS* mix = nullptr);
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
                           RhsScratch& scratch, State& Rhs,
-                          const Field3D* gfn = nullptr);
+                          const Field3D* gfn = nullptr,
+                          const MixtureEOS* mix = nullptr);
 
 // Adds viscous contribution + div(tau u - q) to existing Rhs in-place.
 // Caller has called apply_bcs and (if needed) compute_rhs_inviscid first.
@@ -38,7 +44,8 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
 
 // Returns the global maximum stable timestep for the hyperbolic CFL.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl, const Field3D* gfn = nullptr);
+                       Real cfl, const Field3D* gfn = nullptr,
+                       const MixtureEOS* mix = nullptr);
 
 // Returns the global maximum stable timestep for the viscous CFL,
 // dt = cfl * dx^2 / nu where nu = mu/rho_min.
@@ -49,7 +56,8 @@ Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
 // MPI-aware dt: compute the local minimum, then MPI_Allreduce(..., MIN, comm)
 // to get the global one. Same numerics as the serial version.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl, MPI_Comm comm, const Field3D* gfn = nullptr);
+                       Real cfl, MPI_Comm comm, const Field3D* gfn = nullptr,
+                       const MixtureEOS* mix = nullptr);
 Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
                     Real cfl, MPI_Comm comm);
 #endif

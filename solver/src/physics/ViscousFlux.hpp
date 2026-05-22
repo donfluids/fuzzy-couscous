@@ -83,6 +83,12 @@ struct ViscousParams {
     // contacts) instead of the non-conservative gated double-flux. Conserves
     // total energy; small pressure oscillations at strong contacts.
     bool mf_conservative = false;
+    // Positivity floors applied by the RK3 multifluid path (rho, internal-energy
+    // density). Defaults match the historical two-gamma constants (air ~ O(1)).
+    // For a strongly contrasting JWL run (ambient air ~ 1e-3) the driver sets
+    // these relative to the ambient state so the floor cannot clip real air.
+    Real rho_floor  = 1e-5;
+    Real eint_floor = 1e-6;
 };
 
 // Local 3x3 velocity gradient at a cell, dudx[v][d] = d u_v / d x_d,

@@ -61,7 +61,7 @@ std::string HDF5Writer::snapshot_path_(int step) const {
 
 void HDF5Writer::write_snapshot(const State& U, const Grid& g,
                                 const IdealGas& eos, Real t, int step,
-                                const Field3D* gfn) {
+                                const Field3D* gfn, const MixtureEOS* mix) {
     const int nx_l = U.nx(), ny_l = U.ny(), nz_l = U.nz();
     const std::size_t N_l = static_cast<std::size_t>(nx_l) * ny_l * nz_l;
 
@@ -78,9 +78,12 @@ void HDF5Writer::write_snapshot(const State& U, const Grid& g,
                 const Real wi = U[RHOW](i, j, k) / r;
                 const Real ke = 0.5 * r * (ui*ui + vi*vi + wi*wi);
                 const Real eint = U[RHOE](i, j, k) - ke;
-                // Multifluid: local gamma via G (p = e_int/G); else constant eos.
-                const Real pi = gfn ? eint / (*gfn)(i, j, k)
-                                    : eos.pressure(r, eint);
+                // Multifluid: local EOS via the marker. JWL products use the JWL
+                // EOS (mix); two-gamma uses p = e_int/G; single-fluid uses eos.
+                Real pi;
+                if (gfn && mix)      { Real cc; mix->p_c((*gfn)(i, j, k), r, eint, pi, cc); }
+                else if (gfn)        { pi = eint / (*gfn)(i, j, k); }
+                else                 { pi = eos.pressure(r, eint); }
                 rho[idx] = r;
                 u[idx]   = ui;
                 v[idx]   = vi;

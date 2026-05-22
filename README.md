@@ -104,6 +104,32 @@ $PY tools/ensemble_average.py out_a/*_stats.csv out_b/*_stats.csv \
 | LES sink | `ν_h ∇⁴ U` hyperdissipation on every conserved variable (`physics.hyper_coeff` knob) |
 | Time integration | SSP-RK3 (Gottlieb–Shu) with optional source-term callback for MMS |
 | Boundary conditions | Periodic, slip-wall (adiabatic), characteristic outflow |
+| Equation of state | Ideal gas; or a marker-selected mixture (ideal air + dense products) for blasts: two-gamma, or **JWL** for real high explosives (TNT) |
+
+### Equation of state and multifluid (`[multifluid]`)
+
+A blast can carry an advected per-cell marker selecting the products EOS against
+ambient ideal air. Two modes (`eos = "two_gamma" | "jwl"`):
+
+- **two-gamma** — marker is `G = 1/(γ−1)`; products are a second ideal gas
+  (`gamma_p`). The original variable-density contact model.
+- **jwl** — marker is a products mass fraction `φ ∈ [0,1]`; products follow the
+  Jones–Wilkins–Lee EOS `p = A(1−ω/R₁V)e^{−R₁V} + B(1−ω/R₂V)e^{−R₂V} + ω·e`
+  (`V = ρ₀/ρ`), which real high explosives obey and an ideal gas cannot. Ships
+  with the LLNL/Dobratz **TNT** set (`examples/tnt_freeair.toml`), run
+  nondimensionally (`rho_ref = ρ₀`, `p_ref = p_CJ`) so the ~1000:1 density /
+  10⁵:1 pressure contrast (Atwood ≈ 0.999) stays well conditioned; the products
+  bubble starts at the tabulated CJ state.
+
+Both modes share one dispatcher (`physics/MixtureEOS.hpp`) that maps
+`(marker, ρ, e_int) → (p, c)` at the flux/CFL sites; the EOS-agnostic Euler flux
+(`euler_flux(U, p, d)`) is reused unchanged. The contact uses a gated double-flux
+(non-oscillatory) or an opt-in conservative flux (`conservative = true`). JWL is
+validated by 1-D EOS self-consistency (CJ sound speed `c_CJ = D − u_CJ`), a
+serial/MPI bit-exact regression, and a free-air blast whose peak-overpressure
+envelope decays between the near-field `Z⁻³` and far-field `Z⁻¹` slopes
+(`scripts/blast_overpressure.py`). Afterburning (reactive heat release) is a
+deferred follow-on.
 
 ## Diagnostics (the paper-revision deliverable)
 

@@ -4,6 +4,7 @@
 #include "core/Field3D.hpp"
 #include "core/Grid.hpp"
 #include "core/State.hpp"
+#include "physics/MixtureEOS.hpp"
 
 #ifdef BLAST_MPI
 #include "parallel/Domain.hpp"
@@ -36,6 +37,30 @@ struct MultifluidParams {
     // standard, far less stiff choice; the CJ thermodynamic state (rho_CJ,
     // p_CJ) is still imposed. 1.0 reproduces the full CJ particle velocity.
     Real cj_u_frac = 0.0;
+
+    // ---- JWL products EOS (for real high explosives, e.g. TNT) -------------
+    // When jwl_mode, the marker field is a products mass fraction phi in [0,1]
+    // (not G), the products region is the tabulated CJ state (rho_cj, p_cj) with
+    // the JWL EOS, and ambient air is (rho_a, p_a). All quantities here are
+    // already NONDIMENSIONAL (the caller divides by rho_ref/p_ref at load).
+    bool      jwl_mode  = false;
+    JWLParams jwl{};
+    Real      rho_cj = 0.0, p_cj = 0.0, p_a = 0.0;
+    Real      phi_switch = 0.5;
+
+    // Build the matching mixture EOS for the flux/CFL loops.
+    MixtureEOS mixture() const {
+        MixtureEOS m;
+        m.gamma_air = gamma_air;
+        if (jwl_mode) {
+            m.mode = MixMode::JWL;
+            m.phi_switch = phi_switch;
+            m.jwl = jwl;
+        } else {
+            m.mode = MixMode::TwoGamma;
+        }
+        return m;
+    }
 };
 
 // Initialize the two-fluid blast: rho, momentum=0, rhoE consistent with the
@@ -63,9 +88,11 @@ void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc,
                  Real dt, const Domain& d, Halo& halo);
 #endif
 
-// G-aware pressure extremes p=(rhoE-ke)/G over the interior, for the
-// non-oscillatory gate (uniform-p contact must stay uniform).
-void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax);
+// Marker-aware pressure extremes over the interior, for the non-oscillatory gate
+// (uniform-p contact must stay uniform) and diagnostics. mix==nullptr keeps the
+// two-gamma form p=(rhoE-ke)/G; with a JWL mix the products use the JWL EOS.
+void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax,
+                        const MixtureEOS* mix = nullptr);
 
 // G boundedness / mixing diagnostic. G is an advected marker, so it must stay
 // within its initial range [G_air, G_products] (discrete maximum principle for

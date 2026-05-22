@@ -14,6 +14,7 @@
 #include "parallel/Domain.hpp"
 #include "parallel/Halo.hpp"
 #include "physics/EOS.hpp"
+#include "physics/MixtureEOS.hpp"
 #include "physics/Multifluid.hpp"
 
 #include <mpi.h>
@@ -353,6 +354,95 @@ int run_multifluid_bitexact(int K_steps, bool conservative) {
     return fail;
 }
 
+// JWL multifluid blast: same machinery as the two-gamma case but with the JWL
+// products EOS selected by a phi marker. Exercises the phi halo exchange, MPI
+// mf_advect_G, JWL frozen-EOS double-flux, and the JWL local sound speed / dt
+// across partitions. Serial and MPI use the identical MixtureEOS, so any
+// mismatch isolates the domain decomposition.
+int run_jwl_bitexact(int K_steps) {
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    Grid global_g;
+    global_g.nx = global_g.ny = global_g.nz = 32;
+    global_g.lx = global_g.ly = global_g.lz = 1.0;
+    global_g.x0 = global_g.y0 = global_g.z0 = -0.5;
+
+    BCSet bc;
+    bc.xlo = bc.xhi = BCType::Outflow;
+    bc.ylo = bc.yhi = BCType::Outflow;
+    bc.zlo = bc.zhi = BCType::Outflow;
+
+    IdealGas eos{GammaLaw{}};            // gamma = 1.4 = air
+    ViscousParams vp; vp.mu = 0.0;
+
+    // Nondimensional TNT (rho_ref=1630, p_ref=21e9): products O(1), air ~ 1e-3.
+    const Real rr = 1630.0, pr = 21.0e9;
+    MultifluidParams mp;
+    mp.enabled = true; mp.gamma_air = eos.eos.gamma; mp.R = eos.eos.R;
+    mp.jwl_mode = true; mp.phi_switch = 0.5;
+    mp.jwl.A = 3.712e11 / pr; mp.jwl.B = 3.231e9 / pr;
+    mp.jwl.R1 = 4.15; mp.jwl.R2 = 0.95; mp.jwl.omega = 0.30;
+    mp.jwl.rho0 = 1630.0 / rr; mp.jwl.E0 = 7.0e9 / pr;
+    mp.rho_cj = 2228.0 / rr; mp.p_cj = 21.0e9 / pr;
+    mp.rho_a = 1.2 / rr; mp.p_a = 1.013e5 / pr;
+    mp.r0 = 0.12; mp.tanh_thickness = 0.04; mp.Y42_amp = 0.2;
+    vp.rho_floor  = 1e-3 * mp.rho_a;
+    vp.eint_floor = 1e-3 * (mp.p_a / (mp.gamma_air - 1.0));
+    const MixtureEOS mix = mp.mixture();
+    const Real cfl = 0.3;
+
+    // ---- MPI path ----
+    Domain dom(MPI_COMM_WORLD, global_g, bc);
+    Grid local_g = dom.local_grid(global_g);
+    State U_mpi(local_g.nx, local_g.ny, local_g.nz);
+    Field3D G_mpi(local_g.nx, local_g.ny, local_g.nz);
+    G_mpi.fill(0.0);
+    mf_init_blast(U_mpi, G_mpi, local_g, mp);
+    Halo halo(U_mpi, dom);
+    halo.exchange(U_mpi);  apply_bcs(U_mpi, bc, dom);
+    halo.exchange(G_mpi);  apply_bcs(G_mpi, bc, dom);
+    RK3 driver_mpi(local_g.nx, local_g.ny, local_g.nz, U_mpi.ng());
+    for (int s = 0; s < K_steps; ++s) {
+        Real dt = max_dt_hyperbolic(U_mpi, local_g, eos, cfl, dom.comm(), &G_mpi, &mix);
+        driver_mpi.step_mpi(U_mpi, local_g, bc, eos, vp, dt, dom, halo, &G_mpi, &mix);
+        mf_advect_G(G_mpi, U_mpi, local_g, bc, dt, dom, halo);
+    }
+    std::vector<double> grho, gmom, ge, gG;
+    gather_field_to_rank0(U_mpi[RHO ], global_g, dom, grho);
+    gather_field_to_rank0(U_mpi[RHOU], global_g, dom, gmom);
+    gather_field_to_rank0(U_mpi[RHOE], global_g, dom, ge);
+    gather_field_to_rank0(G_mpi,       global_g, dom, gG);
+
+    int fail = 0;
+    if (rank == 0) {
+        State U_ser(global_g.nx, global_g.ny, global_g.nz);
+        Field3D G_ser(global_g.nx, global_g.ny, global_g.nz);
+        G_ser.fill(0.0);
+        mf_init_blast(U_ser, G_ser, global_g, mp);
+        mf_fill_G_bcs(G_ser, bc);
+        RK3 driver_ser(global_g.nx, global_g.ny, global_g.nz, U_ser.ng());
+        for (int s = 0; s < K_steps; ++s) {
+            Real dt = max_dt_hyperbolic(U_ser, global_g, eos, cfl, &G_ser, &mix);
+            driver_ser.step(U_ser, global_g, bc, eos, vp, dt, &G_ser, &mix);
+            mf_advect_G(G_ser, U_ser, global_g, bc, dt);
+        }
+        const Real er = max_abs_error(grho, U_ser[RHO ], global_g);
+        const Real em = max_abs_error(gmom, U_ser[RHOU], global_g);
+        const Real ee = max_abs_error(ge,   U_ser[RHOE], global_g);
+        const Real eg = max_abs_error(gG,   G_ser,       global_g);
+        const Real tol = 1e-12;
+        const bool bitexact = (er < tol && em < tol && ee < tol && eg < tol);
+        std::printf("JWL blast, K=%d steps, ranks=%d: "
+                    "max|dRho|=%.2e max|dMom|=%.2e max|dE|=%.2e max|dPhi|=%.2e %s\n",
+                    K_steps, size, er, em, ee, eg, bitexact ? "PASS" : "FAIL");
+        if (!bitexact) fail = 1;
+    }
+    MPI_Bcast(&fail, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    return fail;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -367,6 +457,7 @@ int main(int argc, char** argv) {
         total_fail += run_sedov_bitexact(15);
         total_fail += run_multifluid_bitexact(15, /*conservative=*/false);
         total_fail += run_multifluid_bitexact(15, /*conservative=*/true);
+        total_fail += run_jwl_bitexact(15);
     }
 
     if (rank == 0)

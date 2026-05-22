@@ -1,0 +1,106 @@
+# 256^3 free-air TNT blast with the JWL products EOS.
+#
+# Real high explosive: detonation products follow the Jones-Wilkins-Lee EOS
+# (NOT an ideal gas), with a ~1000:1 density contrast and ~10^5:1 pressure
+# contrast against ambient air (Atwood ~ 0.999). The run is NONDIMENSIONAL:
+# rho_ref = rho0 = 1630 kg/m^3, p_ref = p_CJ = 21 GPa, so the products sit at
+# O(1) and the contrast is well conditioned (the solver divides the SI JWL
+# constants below by these refs at load).
+#
+# TNT JWL parameters (LLNL / Dobratz & Crawford, "LLNL Explosives Handbook"):
+#   A=371.2 GPa, B=3.231 GPa, R1=4.15, R2=0.95, omega=0.30, rho0=1630 kg/m^3,
+#   E0=7.0 GPa, p_CJ=21 GPa, D=6930 m/s. The CJ density rho_CJ=2228 kg/m^3 is
+#   the Rankine-Hugoniot value 1/(1 - p_CJ/(rho0 D^2)) * rho0 (self-consistent
+#   with the JWL sound speed at CJ -> c_CJ = D - u_CJ; see tests/test_jwl.cpp).
+run_name = "tnt_chamber_128"
+
+[grid]
+nx = 128
+ny = 128
+nz = 128
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+# The JWL multifluid branch (mf_init_blast) overwrites the state; it reads only
+# r0 / Y42_amp / tanh_thickness from here for the products-bubble shape.
+type           = "smooth_sphere"
+r0             = 0.06
+rho_B          = 1.0
+T_B            = 1.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2          # seed baroclinic/RM wrinkling of the contact
+tanh_thickness = 0.024        # ~3 dx at 128^3 (resolved contact)
+
+[multifluid]
+enabled    = true
+eos        = "jwl"
+conservative = false          # gated double-flux: non-oscillatory at the contact
+# Nondimensional reference scales (SI params below are divided by these).
+rho_ref    = 1630.0           # kg/m^3 (= rho0)
+p_ref      = 21.0e9           # Pa     (= p_CJ)
+# TNT JWL constants (SI).
+jwl_A      = 3.712e11
+jwl_B      = 3.231e9
+jwl_R1     = 4.15
+jwl_R2     = 0.95
+jwl_omega  = 0.30
+jwl_rho0   = 1630.0
+jwl_E0     = 7.0e9
+# Products CJ state (SI) for the bubble IC, and ambient air (SI).
+rho_cj     = 2228.0
+p_cj       = 21.0e9
+rho_a      = 1.2
+p_a        = 1.013e5
+phi_switch = 0.5
+
+[physics]
+gamma        = 1.4            # ambient air
+R            = 1.0
+mu           = 0.0
+prandtl      = 0.71
+bulk_visc    = 0.0
+hyper_coeff  = 0.0
+hyper6_coeff = 2.5e-15
+
+[afp]
+# LAD + WENO hybrid: artificial bulk (shocks) + mass/contact diffusivity stabilize
+# the strong blast and the 1000:1 density contact (LAD-only is insufficient).
+enabled      = true
+r_order      = 4
+C_beta       = 1.0
+C_kappa      = 0.01
+C_D          = 0.05           # extra contact smoothing for the steep density jump
+disable_weno = false
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.5
+dt_max         = 1.0
+max_steps      = 200000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "runs/out_tnt_chamber_128"
+stats_dt         = 0.002
+spectra_dt       = 0.005
+snapshot_dt      = 0.02
+checkpoint_dt    = 0.05
+write_spectra    = true
+write_helmholtz  = true

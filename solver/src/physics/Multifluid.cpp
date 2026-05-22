@@ -22,6 +22,39 @@ inline Real Y42(Real x, Real y, Real z) {
 
 void mf_init_blast(State& U, Field3D& G, const Grid& g, const MultifluidParams& mp) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+
+    // JWL products (real high explosive, e.g. TNT): the marker is a products
+    // mass fraction phi in [0,1] (not G). Products region = tabulated CJ state
+    // (rho_cj, p_cj) with the JWL EOS; ambient = (rho_a, p_a) ideal air. The
+    // bubble starts at rest (cj_u_frac ignored here -- least-stiff choice). The
+    // internal energy is taken from the EOS selected by the frozen phi>=switch
+    // rule so it is consistent with the flux-loop pressure.
+    if (mp.jwl_mode) {
+        const Real delta = (mp.tanh_thickness > 0 ? mp.tanh_thickness : 3.0 * g.dx());  // resolved (~3 dx) default: a ~1 dx contact grid-seeds RM
+        const Real gam_a = mp.gamma_air;
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i) {
+                    const Real x = g.xc(i), y = g.yc(j), z = g.zc(k);
+                    const Real r = std::sqrt(x*x + y*y + z*z);
+                    const Real r0e = mp.r0 * (1.0 + mp.Y42_amp * Y42(x, y, z));
+                    const Real w = 0.5 * (1.0 + std::tanh((r0e - r) / delta)); // 1 inside
+                    const Real phi = w;
+                    const Real rho = mp.rho_a + (mp.rho_cj - mp.rho_a) * w;
+                    const Real p   = mp.p_a   + (mp.p_cj   - mp.p_a)   * w;
+                    const Real e_int = (phi >= mp.phi_switch)
+                                           ? jwl_eint_from_p(mp.jwl, rho, p)
+                                           : p / (gam_a - 1.0);
+                    U[RHO](i,j,k)  = rho;
+                    U[RHOU](i,j,k) = 0.0;
+                    U[RHOV](i,j,k) = 0.0;
+                    U[RHOW](i,j,k) = 0.0;
+                    U[RHOE](i,j,k) = e_int;          // velocity = 0 -> ke = 0
+                    G(i,j,k)       = phi;
+                }
+        return;
+    }
+
     const Real Ga = 1.0 / (mp.gamma_air - 1.0);
     const Real Gp = 1.0 / (mp.gamma_p   - 1.0);
     const Real pa = mp.rho_a * mp.R * mp.T_a;
@@ -43,7 +76,7 @@ void mf_init_blast(State& U, Field3D& G, const Grid& g, const MultifluidParams& 
         u_cj     = D * (1.0 - rho0 / rho_prod);                 // outward particle vel
     }
 
-    const Real delta = (mp.tanh_thickness > 0 ? mp.tanh_thickness : 1.5 * g.dx());
+    const Real delta = (mp.tanh_thickness > 0 ? mp.tanh_thickness : 3.0 * g.dx());  // resolved (~3 dx) default: a ~1 dx contact grid-seeds RM
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
@@ -131,7 +164,8 @@ void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc,
 }
 #endif
 
-void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax) {
+void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax,
+                        const MixtureEOS* mix) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
     pmin = 1e300; pmax = -1e300;
     for (int k = 0; k < nz; ++k)
@@ -141,7 +175,10 @@ void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax
                 const Real ke = 0.5*(U[RHOU](i,j,k)*U[RHOU](i,j,k)
                                    + U[RHOV](i,j,k)*U[RHOV](i,j,k)
                                    + U[RHOW](i,j,k)*U[RHOW](i,j,k))/rho;
-                const Real p = (U[RHOE](i,j,k) - ke) / G(i,j,k);
+                const Real e_int = U[RHOE](i,j,k) - ke;
+                Real p, c;
+                if (mix) mix->p_c(G(i,j,k), rho, e_int, p, c);
+                else     p = e_int / G(i,j,k);
                 pmin = std::min(pmin, p); pmax = std::max(pmax, p);
             }
 }

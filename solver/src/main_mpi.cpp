@@ -191,6 +191,8 @@ int main(int argc, char** argv) {
     Field3D Gfield(local_g.nx, local_g.ny, local_g.nz);
     Gfield.fill(1.0 / (c.physics.eos.gamma - 1.0));
     const Field3D* gptr = nullptr;
+    MixtureEOS mixEOS;
+    const MixtureEOS* mixptr = nullptr;   // JWL only; two-gamma keeps the legacy path
     if (c.multifluid.enabled) {
         MultifluidParams mp;
         mp.enabled   = true;
@@ -201,15 +203,42 @@ int main(int argc, char** argv) {
         mp.q = c.multifluid.q; mp.rho_e = c.multifluid.rho_e; mp.T_e = c.multifluid.T_e;
         mp.cj_u_frac = c.multifluid.cj_u_frac;
         mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
+        if (c.multifluid.eos == "jwl") {
+            const Real pr = c.multifluid.p_ref, rr = c.multifluid.rho_ref;
+            mp.jwl_mode  = true;
+            mp.jwl.A     = c.multifluid.jwl_A / pr;
+            mp.jwl.B     = c.multifluid.jwl_B / pr;
+            mp.jwl.R1    = c.multifluid.jwl_R1;
+            mp.jwl.R2    = c.multifluid.jwl_R2;
+            mp.jwl.omega = c.multifluid.jwl_omega;
+            mp.jwl.rho0  = c.multifluid.jwl_rho0 / rr;
+            mp.jwl.E0    = c.multifluid.jwl_E0 / pr;
+            mp.rho_cj    = c.multifluid.rho_cj / rr;
+            mp.p_cj      = c.multifluid.p_cj   / pr;
+            mp.rho_a     = c.multifluid.rho_a  / rr;
+            mp.p_a       = c.multifluid.p_a_jwl / pr;
+            mp.phi_switch = c.multifluid.phi_switch;
+            Gfield.fill(0.0);
+        }
         if (!c.output.restart_path.empty() && world_rank == 0)
-            BLAST_WARN("multifluid restart does not restore G; reinitializing "
-                       "from the IC (only valid at t=0)");
+            BLAST_WARN("multifluid restart does not restore the marker; "
+                       "reinitializing from the IC (only valid at t=0)");
         mf_init_blast(U, Gfield, local_g, mp);
         gptr = &Gfield;
-        if (world_rank == 0)
-            BLAST_INFO("multifluid ON (MPI): products gamma={} rho={} T={} vs "
-                       "air gamma={} rho={}",
+        if (mp.jwl_mode) {
+            mixEOS = mp.mixture();
+            mixptr = &mixEOS;
+            vp.rho_floor  = 1e-3 * mp.rho_a;
+            vp.eint_floor = 1e-3 * (mp.p_a / (mp.gamma_air - 1.0));
+            if (world_rank == 0)
+                BLAST_INFO("multifluid ON (MPI, JWL): products rho_cj={} p_cj={} "
+                           "(nondim) vs air rho={} p={}",
+                           mp.rho_cj, mp.p_cj, mp.rho_a, mp.p_a);
+        } else if (world_rank == 0) {
+            BLAST_INFO("multifluid ON (MPI, two-gamma): products gamma={} rho={} "
+                       "T={} vs air gamma={} rho={}",
                        mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
+        }
     }
 
     Halo halo(U, domain);
@@ -383,14 +412,14 @@ int main(int argc, char** argv) {
     Real t = start_time;
     int step = start_step;
     log_diagnostics(step, t, 0.0, /*do_spectra=*/true);
-    writer.write_snapshot(U, global_g, eos, t, step, gptr);
+    writer.write_snapshot(U, global_g, eos, t, step, gptr, mixptr);
 
     const std::string ckpt_path =
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
         Real dt_hyp = max_dt_hyperbolic(U, local_g, eos, c.time.cfl_hyperbolic,
-                                         domain.comm(), gptr);
+                                         domain.comm(), gptr, mixptr);
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, local_g, vp, c.time.cfl_viscous, domain.comm())
                     : 1e30;
@@ -412,7 +441,7 @@ int main(int argc, char** argv) {
             break;
         }
 
-        driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo, gptr);
+        driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo, gptr, mixptr);
         if (gptr) mf_advect_G(Gfield, U, local_g, bc, dt, domain, halo);
         if (forcing) {
             forcing->evolve_ou(dt);
@@ -430,7 +459,7 @@ int main(int argc, char** argv) {
                                    step, spec_every);
         if (do_stats || do_spec) log_diagnostics(step, t, dt, do_spec);
         if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every))
-            writer.write_snapshot(U, global_g, eos, t, step, gptr);
+            writer.write_snapshot(U, global_g, eos, t, step, gptr, mixptr);
         if (due(t, c.output.checkpoint_dt, next_ckpt_t, step, c.output.checkpoint_every))
             write_checkpoint(ckpt_path, U, global_g, t, step, domain);
     }

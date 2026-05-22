@@ -4,6 +4,7 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 #include "physics/EOS.hpp"
+#include "physics/MixtureEOS.hpp"
 
 namespace blast {
 
@@ -19,7 +20,13 @@ namespace blast {
 //
 // Both phi_v and phi_p live in [0,1]. The hybrid scheme switches to WENO
 // where theta exceeds ~0.65.
+//
+// gfn/mix (optional): when running a JWL multifluid the products pressure cannot
+// be computed from the air gamma, so the indicator uses the local mixture EOS.
+// Single-fluid and two-gamma runs (mix == nullptr, or TwoGamma mode) keep the
+// reference-gamma path bit-identical.
 void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
-                    Field3D& theta);
+                    Field3D& theta, const Field3D* gfn = nullptr,
+                    const MixtureEOS* mix = nullptr);
 
 }  // namespace blast

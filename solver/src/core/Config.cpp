@@ -163,6 +163,7 @@ Config load_config(const std::string& path) {
     auto mf = tbl["multifluid"];
     c.multifluid.enabled = pick<bool>(mf["enabled"],   c.multifluid.enabled);
     c.multifluid.conservative = pick<bool>(mf["conservative"], c.multifluid.conservative);
+    c.multifluid.eos     = pick<std::string>(mf["eos"], c.multifluid.eos);
     c.multifluid.gamma_p = pick<double>(mf["gamma_p"], c.multifluid.gamma_p);
     c.multifluid.rho_p   = pick<double>(mf["rho_p"],   c.multifluid.rho_p);
     c.multifluid.T_p     = pick<double>(mf["T_p"],     c.multifluid.T_p);
@@ -172,6 +173,20 @@ Config load_config(const std::string& path) {
     c.multifluid.rho_e   = pick<double>(mf["rho_e"],   c.multifluid.rho_e);
     c.multifluid.T_e     = pick<double>(mf["T_e"],     c.multifluid.T_e);
     c.multifluid.cj_u_frac = pick<double>(mf["cj_u_frac"], c.multifluid.cj_u_frac);
+    // JWL products EOS (eos = "jwl").
+    c.multifluid.jwl_A     = pick<double>(mf["jwl_A"],     c.multifluid.jwl_A);
+    c.multifluid.jwl_B     = pick<double>(mf["jwl_B"],     c.multifluid.jwl_B);
+    c.multifluid.jwl_R1    = pick<double>(mf["jwl_R1"],    c.multifluid.jwl_R1);
+    c.multifluid.jwl_R2    = pick<double>(mf["jwl_R2"],    c.multifluid.jwl_R2);
+    c.multifluid.jwl_omega = pick<double>(mf["jwl_omega"], c.multifluid.jwl_omega);
+    c.multifluid.jwl_rho0  = pick<double>(mf["jwl_rho0"],  c.multifluid.jwl_rho0);
+    c.multifluid.jwl_E0    = pick<double>(mf["jwl_E0"],    c.multifluid.jwl_E0);
+    c.multifluid.rho_cj    = pick<double>(mf["rho_cj"],    c.multifluid.rho_cj);
+    c.multifluid.p_cj      = pick<double>(mf["p_cj"],      c.multifluid.p_cj);
+    c.multifluid.p_a_jwl   = pick<double>(mf["p_a"],       c.multifluid.p_a_jwl);
+    c.multifluid.phi_switch = pick<double>(mf["phi_switch"], c.multifluid.phi_switch);
+    c.multifluid.rho_ref   = pick<double>(mf["rho_ref"],   c.multifluid.rho_ref);
+    c.multifluid.p_ref     = pick<double>(mf["p_ref"],     c.multifluid.p_ref);
 
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);

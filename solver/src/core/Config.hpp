@@ -134,6 +134,11 @@ struct MultifluidConfig {
     // instead of the energy-non-conservative gated double-flux. Trades small
     // contact pressure oscillations for total-energy conservation.
     bool conservative = false;
+    // EOS mode for the products: "two_gamma" (ideal gas, gamma_p) or "jwl"
+    // (Jones-Wilkins-Lee, for real high explosives like TNT). Air is always
+    // ideal (physics.eos.gamma). The advected marker is G=1/(gamma-1) for
+    // two_gamma, or a products mass fraction phi in [0,1] for jwl.
+    std::string eos = "two_gamma";
     Real gamma_p   = 1.25;     // products gamma (larger cv); air uses physics.eos.gamma
     Real rho_p     = 10.0;
     Real T_p       = 100.0;
@@ -144,6 +149,21 @@ struct MultifluidConfig {
     Real rho_e     = 0.0;      // unreacted explosive density (0 -> use rho_p)
     Real T_e       = 1.0;      // unreacted explosive temperature
     Real cj_u_frac = 0.0;      // fraction of CJ particle velocity imposed at t=0
+
+    // ---- JWL (eos = "jwl") -------------------------------------------------
+    // Standard JWL coefficients (SI by default; divided by p_ref/rho_ref at
+    // load so the solver sees nondimensional O(1) products). Products IC is the
+    // tabulated CJ state (rho_cj, p_cj); ambient air is (rho_a, p_a_jwl).
+    Real jwl_A = 0.0, jwl_B = 0.0;       // reference-curve coefficients [pressure]
+    Real jwl_R1 = 0.0, jwl_R2 = 0.0;     // reference-curve exponents [-]
+    Real jwl_omega = 0.0;                // Grueneisen coefficient [-]
+    Real jwl_rho0 = 1.0;                 // solid/reference density
+    Real jwl_E0 = 0.0;                   // detonation energy per volume [pressure]
+    Real rho_cj = 0.0, p_cj = 0.0;       // products CJ state for the IC
+    Real p_a_jwl = 0.0;                  // ambient air pressure for the IC
+    Real phi_switch = 0.5;               // products if phi >= phi_switch
+    // Nondimensional reference scales (1.0 -> params already nondimensional).
+    Real rho_ref = 1.0, p_ref = 1.0;
 };
 
 struct TurbulenceConfig {

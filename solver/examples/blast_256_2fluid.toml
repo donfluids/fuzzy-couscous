@@ -1,0 +1,72 @@
+# 256^3 TWO-GAMMA multifluid blast (dense products gamma_p=1.25, rho_p=10 vs
+# air gamma=1.4, rho_a=1; Atwood ~ 0.82). Identical grid/BC/numerics to the
+# single-fluid blast_256_slip_hyper6_fd so the only difference is the contact:
+# baroclinic torque (grad rho x grad p) at the Y42-seeded products/air interface
+# is the solenoidal-turbulence source absent in the single-fluid run.
+run_name = "blast_256_2fluid"
+
+[grid]
+nx = 256
+ny = 256
+nz = 256
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.1
+rho_B          = 10.0
+T_B            = 100.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2
+tanh_thickness = 0.006        # ~1.5 dx at 256^3 (matches single-fluid run)
+
+[multifluid]
+enabled = true
+conservative = true          # telescoping local-gamma flux: conserves total energy
+gamma_p = 1.25
+rho_p   = 10.0
+T_p     = 100.0
+rho_a   = 1.0
+T_a     = 1.0
+
+[physics]
+gamma        = 1.4
+R            = 1.0
+mu           = 5.0e-4
+prandtl      = 0.71
+bulk_visc    = 0.0
+hyper_coeff  = 0.0
+hyper6_coeff = 3.9e-16
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.06
+dt_max         = 1.0
+max_steps      = 100000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "runs/out_blast_256_2fluid"
+stats_dt         = 0.0005
+spectra_dt       = 0.0005
+snapshot_dt      = 0.005      # full-field dumps for baroclinic_source.py
+checkpoint_dt    = 0.01
+write_spectra    = true
+write_helmholtz  = true

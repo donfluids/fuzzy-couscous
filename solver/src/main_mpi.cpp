@@ -260,7 +260,7 @@ int main(int argc, char** argv) {
 
     Real e_total_0 = 0.0, rho_mean_0 = 0.0;
     bool cons0_set = false;
-    auto log_diagnostics = [&](int step, Real t, Real dt) {
+    auto log_diagnostics = [&](int step, Real t, Real dt, bool do_spectra) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
         auto b = dissipation_budget(U, local_g, eos, vp, N_global, domain.comm());
         if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
@@ -273,7 +273,7 @@ int main(int argc, char** argv) {
         const Real p_imbalance = pmag / std::max(s.rho_mean * s.c_mean, 1e-30);
         HelmholtzResult h{};
         ShellSpectrum sp{};
-        if (c.output.write_helmholtz || c.output.write_spectra) {
+        if (do_spectra && (c.output.write_helmholtz || c.output.write_spectra)) {
             if (periodic_spec)
                 h = helmholtz_decompose_mpi_dist(U, global_g, *fft_plan, domain);
             else if (slip_spec)
@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
                                                 *dct_plan_u, *dct_plan_v, *dct_plan_w,
                                                 domain);
         }
-        if (c.output.write_spectra) {
+        if (do_spectra && c.output.write_spectra) {
             if (periodic_spec) {
                 sp = velocity_spectrum_mpi_dist(U, global_g, *fft_plan, domain);
             } else if (slip_spec) {
@@ -317,9 +317,27 @@ int main(int argc, char** argv) {
         }
     };
 
+    // Output cadence: each kind fires on a physical-time interval (*_dt > 0,
+    // time-uniform) or else a step interval (*_every). `due` advances the next
+    // trigger time past the current t so a large dt cannot skip a window.
+    const int spec_every = (c.output.spectra_every > 0) ? c.output.spectra_every
+                                                        : c.output.stats_every;
+    auto due = [](Real t, Real interval, Real& next, int step, int step_every) {
+        if (interval > 0.0) {
+            if (t < next - 1e-12) return false;
+            next = (std::floor(t / interval) + 1.0) * interval;
+            return true;
+        }
+        return step_every > 0 && step % step_every == 0;
+    };
+    Real next_stats_t = start_time + c.output.stats_dt;
+    Real next_spec_t  = start_time + c.output.spectra_dt;
+    Real next_snap_t  = start_time + c.output.snapshot_dt;
+    Real next_ckpt_t  = start_time + c.output.checkpoint_dt;
+
     Real t = start_time;
     int step = start_step;
-    log_diagnostics(step, t, 0.0);
+    log_diagnostics(step, t, 0.0, /*do_spectra=*/true);
     writer.write_snapshot(U, global_g, eos, t, step);
 
     const std::string ckpt_path =
@@ -359,11 +377,15 @@ int main(int argc, char** argv) {
         t += dt;
         ++step;
 
-        if (step % c.output.stats_every == 0)   log_diagnostics(step, t, dt);
-        if (step % c.output.snapshot_every == 0)
+        const bool do_stats = due(t, c.output.stats_dt, next_stats_t,
+                                  step, c.output.stats_every);
+        const bool do_spec  = c.output.write_spectra
+                            && due(t, c.output.spectra_dt, next_spec_t,
+                                   step, spec_every);
+        if (do_stats || do_spec) log_diagnostics(step, t, dt, do_spec);
+        if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every))
             writer.write_snapshot(U, global_g, eos, t, step);
-        if (c.output.checkpoint_every > 0
-            && step % c.output.checkpoint_every == 0)
+        if (due(t, c.output.checkpoint_dt, next_ckpt_t, step, c.output.checkpoint_every))
             write_checkpoint(ckpt_path, U, global_g, t, step, domain);
     }
 

@@ -245,7 +245,7 @@ int main(int argc, char** argv) {
     // (boundary leakage, a non-conservative term, or incipient instability).
     Real e_total_0 = 0.0, rho_mean_0 = 0.0;
     bool cons0_set = false;
-    auto write_diagnostics = [&](int step, Real t, Real dt) {
+    auto write_diagnostics = [&](int step, Real t, Real dt, bool do_spectra) {
         auto s = velocity_stats(U, eos);
         auto b = dissipation_budget(U, c.grid, eos, vp);
         if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
@@ -260,9 +260,9 @@ int main(int argc, char** argv) {
         const Real p_imbalance = pmag / std::max(s.rho_mean * s.c_mean, 1e-30);
         HelmholtzResult h{};
         ShellSpectrum sp{};
-        if (c.output.write_helmholtz || c.output.write_spectra)
+        if (do_spectra && (c.output.write_helmholtz || c.output.write_spectra))
             h = helmholtz_decompose(U, c.grid, fft);
-        if (c.output.write_spectra) {
+        if (do_spectra && c.output.write_spectra) {
             sp = velocity_spectrum(U, c.grid, fft);
             writer.append_spectra(h, sp, t, step);
         }
@@ -278,9 +278,27 @@ int main(int argc, char** argv) {
                    s.e_total, e_ratio, e_drift, m_ratio, m_drift, p_imbalance);
     };
 
+    // Output cadence: each kind fires on a physical-time interval (*_dt > 0,
+    // time-uniform) or else a step interval (*_every). `due` advances the next
+    // trigger time past the current t so a large dt cannot skip a window.
+    const int spec_every = (c.output.spectra_every > 0) ? c.output.spectra_every
+                                                        : c.output.stats_every;
+    auto due = [](Real t, Real interval, Real& next, int step, int step_every) {
+        if (interval > 0.0) {
+            if (t < next - 1e-12) return false;
+            next = (std::floor(t / interval) + 1.0) * interval;
+            return true;
+        }
+        return step_every > 0 && step % step_every == 0;
+    };
+    Real next_stats_t = start_time + c.output.stats_dt;
+    Real next_spec_t  = start_time + c.output.spectra_dt;
+    Real next_snap_t  = start_time + c.output.snapshot_dt;
+    Real next_ckpt_t  = start_time + c.output.checkpoint_dt;
+
     Real t = start_time;
     int step = start_step;
-    write_diagnostics(step, t, 0.0);
+    write_diagnostics(step, t, 0.0, /*do_spectra=*/true);
     writer.write_snapshot(U, c.grid, eos, t, step);
 
     const std::string ckpt_path =
@@ -333,21 +351,26 @@ int main(int argc, char** argv) {
             apply_lele_filter(U, bc, c.filter.sigma);
         }
 
-        if (step % c.output.stats_every == 0) {
-            write_diagnostics(step, t, dt);
-            if (bp.enabled) {
+        const bool do_stats = due(t, c.output.stats_dt, next_stats_t,
+                                  step, c.output.stats_every);
+        const bool do_spec  = c.output.write_spectra
+                            && due(t, c.output.spectra_dt, next_spec_t,
+                                   step, spec_every);
+        if (do_stats || do_spec) {
+            write_diagnostics(step, t, dt, do_spec);
+            if (do_stats && bp.enabled) {
                 Real kmx, amx, bmx;
                 bhr_peaks(turb, kmx, amx, bmx);
                 BLAST_INFO("  BHR <rho k>={:.3e} k_pk={:.3e} |a|_pk={:.3e} b_pk={:.3e}",
                            bhr_tke_integral(U, turb, c.grid), kmx, amx, bmx);
             }
-            if (gptr) {
+            if (do_stats && gptr) {
                 Real pmn, pmx;
                 mf_pressure_minmax(U, Gfield, pmn, pmx);
                 BLAST_INFO("  multifluid p in [{:.3e}, {:.3e}]", pmn, pmx);
             }
         }
-        if (step % c.output.snapshot_every == 0) {
+        if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every)) {
             writer.write_snapshot(U, c.grid, eos, t, step);
             if (bp.enabled) {
                 bhr_write_radial_profiles(U, turb, c.grid,
@@ -359,8 +382,7 @@ int main(int argc, char** argv) {
                 BLAST_INFO("  hybrid sensor <f_k>={:.3f}", fk_mean);
             }
         }
-        if (c.output.checkpoint_every > 0
-            && step % c.output.checkpoint_every == 0)
+        if (due(t, c.output.checkpoint_dt, next_ckpt_t, step, c.output.checkpoint_every))
             write_checkpoint(ckpt_path, U, c.grid, t, step);
     }
 

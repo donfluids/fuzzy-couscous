@@ -152,9 +152,19 @@ struct TurbulenceConfig {
 
 struct OutputConfig {
     std::string out_dir         = "out";
+    // Output cadences. Each kind supports a physical-TIME interval (*_dt) and a
+    // STEP interval (*_every). Precedence per kind: if *_dt > 0, fire whenever the
+    // sim time crosses a multiple of it (time-uniform, robust to varying dt);
+    // else if *_every > 0, fire every *_every steps; else (for spectra) fall back
+    // to the stats cadence. Time intervals are the natural choice for analysis.
     int         snapshot_every  = 100;
+    Real        snapshot_dt     = 0.0;
     int         stats_every     = 10;
-    int         checkpoint_every = 0;   // 0 disables
+    Real        stats_dt        = 0.0;
+    int         spectra_every   = 0;
+    Real        spectra_dt      = 0.0;   // Helmholtz split + shell spectrum
+    int         checkpoint_every = 0;    // 0 disables (step-based)
+    Real        checkpoint_dt   = 0.0;   // restart-file (rolling overwrite) cadence
     bool        write_spectra   = true;
     bool        write_helmholtz = true;
     std::string restart_path    = "";   // empty -> cold start

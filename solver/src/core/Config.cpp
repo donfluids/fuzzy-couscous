@@ -175,8 +175,13 @@ Config load_config(const std::string& path) {
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
     c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);
+    c.output.snapshot_dt      = pick<double>(o["snapshot_dt"],     c.output.snapshot_dt);
     c.output.stats_every      = pick<int64_t>(o["stats_every"],    c.output.stats_every);
+    c.output.stats_dt         = pick<double>(o["stats_dt"],        c.output.stats_dt);
+    c.output.spectra_dt       = pick<double>(o["spectra_dt"],      c.output.spectra_dt);
+    c.output.spectra_every    = pick<int64_t>(o["spectra_every"],  c.output.spectra_every);
     c.output.checkpoint_every = pick<int64_t>(o["checkpoint_every"], c.output.checkpoint_every);
+    c.output.checkpoint_dt    = pick<double>(o["checkpoint_dt"],   c.output.checkpoint_dt);
     c.output.write_spectra    = pick<bool>(o["write_spectra"],   c.output.write_spectra);
     c.output.write_helmholtz  = pick<bool>(o["write_helmholtz"], c.output.write_helmholtz);
     c.output.restart_path     = pick<std::string>(o["restart_path"], c.output.restart_path);

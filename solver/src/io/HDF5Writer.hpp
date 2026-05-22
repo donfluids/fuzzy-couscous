@@ -28,8 +28,11 @@ class HDF5Writer {
 public:
     HDF5Writer(const std::string& out_dir, const std::string& run_name);
 
+    // gfn (optional): two-gamma multifluid G=1/(gamma-1). When provided, the
+    // snapshot pressure is computed with the LOCAL gamma, p=(rhoE-ke)/G, so the
+    // products region is correct (temperature is unaffected -- shared R).
     void write_snapshot(const State& U, const Grid& g, const IdealGas& eos,
-                        Real t, int step);
+                        Real t, int step, const Field3D* gfn = nullptr);
 
     // Append per-step spectra to <run_name>_spectra.h5 under /step_<NNNNNN>/.
     // Each entry holds time, k, E_total, E_sol, E_dil 1D datasets.

@@ -1,5 +1,9 @@
 #include "physics/Multifluid.hpp"
 
+#ifdef BLAST_MPI
+#include "bc/BC.hpp"
+#endif
+
 #include <algorithm>
 #include <cmath>
 
@@ -63,8 +67,7 @@ void mf_init_blast(State& U, Field3D& G, const Grid& g, const MultifluidParams& 
             }
 }
 
-namespace {
-void fill_G_bcs(Field3D& G, const BCSet& bc) {
+void mf_fill_G_bcs(Field3D& G, const BCSet& bc) {
     const int nx = G.nx(), ny = G.ny(), nz = G.nz(), ng = G.ng();
     auto face = [&](int dim, int side, BCType type) {
         const int n = (dim == 0 ? nx : dim == 1 ? ny : nz);
@@ -88,12 +91,14 @@ void fill_G_bcs(Field3D& G, const BCSet& bc) {
     face(1,-1,bc.ylo); face(1,+1,bc.yhi);
     face(2,-1,bc.zlo); face(2,+1,bc.zhi);
 }
-}  // namespace
 
-void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc, Real dt) {
+namespace {
+// Upwind advection of G by the resolved velocity into a scratch buffer, then
+// swap. Assumes G ghosts are already valid (caller fills them). Reads U at the
+// cell centre only; reads G at +/-1 neighbours (interior + one ghost layer).
+void advect_G_upwind(Field3D& G, const State& U, const Grid& g, Real dt) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
     const Real dx = g.dx(), dy = g.dy(), dz = g.dz();
-    fill_G_bcs(G, bc);
     static Field3D Gn;
     if (Gn.nx() != nx || Gn.ny() != ny || Gn.nz() != nz) Gn.resize(nx, ny, nz, ng);
 #pragma omp parallel for collapse(2) schedule(static)
@@ -109,6 +114,22 @@ void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc, Rea
             }
     G.swap(Gn);
 }
+}  // namespace
+
+void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc, Real dt) {
+    mf_fill_G_bcs(G, bc);         // valid ghosts for the upwind gradient
+    advect_G_upwind(G, U, g, dt);
+    mf_fill_G_bcs(G, bc);         // valid ghosts for the next RHS (reads gamma from G)
+}
+
+#ifdef BLAST_MPI
+void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc,
+                 Real dt, const Domain& d, Halo& halo) {
+    halo.exchange(G); apply_bcs(G, bc, d);   // interior-neighbour + physical ghosts
+    advect_G_upwind(G, U, g, dt);
+    halo.exchange(G); apply_bcs(G, bc, d);   // refresh ghosts for the next RHS
+}
+#endif
 
 void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();

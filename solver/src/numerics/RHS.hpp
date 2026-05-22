@@ -49,7 +49,7 @@ Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
 // MPI-aware dt: compute the local minimum, then MPI_Allreduce(..., MIN, comm)
 // to get the global one. Same numerics as the serial version.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl, MPI_Comm comm);
+                       Real cfl, MPI_Comm comm, const Field3D* gfn = nullptr);
 Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
                     Real cfl, MPI_Comm comm);
 #endif

@@ -51,9 +51,11 @@ public:
 #ifdef BLAST_MPI
     // MPI variant: halo-exchange before applying physical BCs at each stage.
     // The Halo object must outlive this RK3.
+    // gfn (optional): two-gamma multifluid G field, held fixed across the 3
+    // stages (its ghosts must be valid on entry; advected separately by caller).
     void step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                   const ViscousParams& vp, Real dt,
-                  const Domain& d, Halo& halo);
+                  const Domain& d, Halo& halo, const Field3D* gfn = nullptr);
 
     // Build the MPI pseudospectral hyperdissipation operator with the
     // global grid, Cartesian domain, and BC-driven basis mode. Call once

@@ -14,6 +14,7 @@
 #include "parallel/Domain.hpp"
 #include "parallel/Halo.hpp"
 #include "physics/EOS.hpp"
+#include "physics/Multifluid.hpp"
 
 #include <mpi.h>
 
@@ -256,6 +257,86 @@ int run_sedov_bitexact(int K_steps) {
     return fail;
 }
 
+// Two-gamma multifluid blast: exercises the G-field halo exchange, MPI
+// mf_advect_G, gated double-flux contact handling, and the local-gamma dt /
+// positivity floor across partitions. Slip-wall box, contact centered at the
+// origin (straddles rank boundaries under a 2x2x1 decomp), so internal-face G
+// ghosts carry products vs air -- the key thing the halo must get right.
+int run_multifluid_bitexact(int K_steps) {
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    Grid global_g;
+    global_g.nx = global_g.ny = global_g.nz = 32;
+    global_g.lx = global_g.ly = global_g.lz = 1.2;
+    global_g.x0 = global_g.y0 = global_g.z0 = -0.6;
+
+    BCSet bc;
+    bc.xlo = bc.xhi = BCType::SlipWall;
+    bc.ylo = bc.yhi = BCType::SlipWall;
+    bc.zlo = bc.zhi = BCType::SlipWall;
+
+    IdealGas eos{GammaLaw{}};            // gamma = 1.4 = gamma_air
+    ViscousParams vp; vp.mu = 0.0;
+    const Real Ga = 1.0 / (eos.eos.gamma - 1.0);
+
+    MultifluidParams mp;
+    mp.enabled = true; mp.gamma_air = eos.eos.gamma; mp.gamma_p = 1.25;
+    mp.R = eos.eos.R; mp.rho_p = 10.0; mp.T_p = 100.0; mp.rho_a = 1.0; mp.T_a = 1.0;
+    mp.r0 = 0.1; mp.tanh_thickness = 0.04; mp.Y42_amp = 0.2;
+    const Real cfl = 0.3;
+
+    // ---- MPI path ----
+    Domain dom(MPI_COMM_WORLD, global_g, bc);
+    Grid local_g = dom.local_grid(global_g);
+    State U_mpi(local_g.nx, local_g.ny, local_g.nz);
+    Field3D G_mpi(local_g.nx, local_g.ny, local_g.nz);
+    G_mpi.fill(Ga);
+    mf_init_blast(U_mpi, G_mpi, local_g, mp);
+    Halo halo(U_mpi, dom);
+    halo.exchange(U_mpi);  apply_bcs(U_mpi, bc, dom);
+    halo.exchange(G_mpi);  apply_bcs(G_mpi, bc, dom);
+    RK3 driver_mpi(local_g.nx, local_g.ny, local_g.nz, U_mpi.ng());
+    for (int s = 0; s < K_steps; ++s) {
+        Real dt = max_dt_hyperbolic(U_mpi, local_g, eos, cfl, dom.comm(), &G_mpi);
+        driver_mpi.step_mpi(U_mpi, local_g, bc, eos, vp, dt, dom, halo, &G_mpi);
+        mf_advect_G(G_mpi, U_mpi, local_g, bc, dt, dom, halo);
+    }
+    std::vector<double> grho, gmom, ge, gG;
+    gather_field_to_rank0(U_mpi[RHO ], global_g, dom, grho);
+    gather_field_to_rank0(U_mpi[RHOU], global_g, dom, gmom);
+    gather_field_to_rank0(U_mpi[RHOE], global_g, dom, ge);
+    gather_field_to_rank0(G_mpi,       global_g, dom, gG);
+
+    int fail = 0;
+    if (rank == 0) {
+        State U_ser(global_g.nx, global_g.ny, global_g.nz);
+        Field3D G_ser(global_g.nx, global_g.ny, global_g.nz);
+        G_ser.fill(Ga);
+        mf_init_blast(U_ser, G_ser, global_g, mp);
+        mf_fill_G_bcs(G_ser, bc);
+        RK3 driver_ser(global_g.nx, global_g.ny, global_g.nz, U_ser.ng());
+        for (int s = 0; s < K_steps; ++s) {
+            Real dt = max_dt_hyperbolic(U_ser, global_g, eos, cfl, &G_ser);
+            driver_ser.step(U_ser, global_g, bc, eos, vp, dt, &G_ser);
+            mf_advect_G(G_ser, U_ser, global_g, bc, dt);
+        }
+        const Real er = max_abs_error(grho, U_ser[RHO ], global_g);
+        const Real em = max_abs_error(gmom, U_ser[RHOU], global_g);
+        const Real ee = max_abs_error(ge,   U_ser[RHOE], global_g);
+        const Real eg = max_abs_error(gG,   G_ser,       global_g);
+        const Real tol = 1e-12;
+        std::printf("Multifluid blast, K=%d steps, ranks=%d: "
+                    "max|dRho|=%.2e max|dMom|=%.2e max|dE|=%.2e max|dG|=%.2e %s\n",
+                    K_steps, size, er, em, ee, eg,
+                    (er < tol && em < tol && ee < tol && eg < tol) ? "PASS" : "FAIL");
+        if (er > tol || em > tol || ee > tol || eg > tol) fail = 1;
+    }
+    MPI_Bcast(&fail, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    return fail;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -268,6 +349,7 @@ int main(int argc, char** argv) {
     {
         total_fail += run_sod_bitexact(20);
         total_fail += run_sedov_bitexact(15);
+        total_fail += run_multifluid_bitexact(15);
     }
 
     if (rank == 0)

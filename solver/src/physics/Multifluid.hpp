@@ -5,6 +5,11 @@
 #include "core/Grid.hpp"
 #include "core/State.hpp"
 
+#ifdef BLAST_MPI
+#include "parallel/Domain.hpp"
+#include "parallel/Halo.hpp"
+#endif
+
 namespace blast {
 
 // Two-gamma multifluid: a per-cell field G = 1/(gamma-1) carries the local fluid
@@ -38,9 +43,25 @@ struct MultifluidParams {
 // interface radius is perturbed by a Y_4^2 mode to seed baroclinic instability.
 void mf_init_blast(State& U, Field3D& G, const Grid& g, const MultifluidParams& mp);
 
+// Fill the G ghost cells (slip-wall/outflow -> zero-gradient mirror; periodic ->
+// wrap) over the full padded field. Call after mf_init_blast so the first RHS
+// sees valid local gamma in the ghosts (serial single-domain BC fill).
+void mf_fill_G_bcs(Field3D& G, const BCSet& bc);
+
 // Advect G with the resolved velocity (operator-split, upwind). Slip-wall ->
-// Neumann (zero-gradient); periodic -> wrap. Double-buffered.
+// Neumann (zero-gradient); periodic -> wrap. Double-buffered. The G ghosts are
+// refilled both before (for the upwind gradient) and after the update (so they
+// are valid for the next RHS evaluation, which reads local gamma from G ghosts).
 void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc, Real dt);
+
+#ifdef BLAST_MPI
+// MPI variant: halo-exchange + physical-face BCs for G (interior neighbours via
+// Halo, walls via apply_bcs) instead of the serial full-field fill, before and
+// after the upwind update. Reads U only at the cell centre, so U ghosts are not
+// needed here.
+void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc,
+                 Real dt, const Domain& d, Halo& halo);
+#endif
 
 // G-aware pressure extremes p=(rhoE-ke)/G over the interior, for the
 // non-oscillatory gate (uniform-p contact must stay uniform).

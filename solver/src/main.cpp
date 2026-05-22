@@ -189,6 +189,7 @@ int main(int argc, char** argv) {
         mp.cj_u_frac = c.multifluid.cj_u_frac;
         mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
         mf_init_blast(U, Gfield, c.grid, mp);
+        mf_fill_G_bcs(Gfield, bc);   // valid G ghosts for the first RHS
         apply_bcs(U, bc);
         gptr = &Gfield;
         BLAST_INFO("multifluid ON: products gamma={} rho={} T={} vs air gamma={} rho={}",
@@ -299,7 +300,7 @@ int main(int argc, char** argv) {
     Real t = start_time;
     int step = start_step;
     write_diagnostics(step, t, 0.0, /*do_spectra=*/true);
-    writer.write_snapshot(U, c.grid, eos, t, step);
+    writer.write_snapshot(U, c.grid, eos, t, step, gptr);
 
     const std::string ckpt_path =
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
@@ -371,7 +372,7 @@ int main(int argc, char** argv) {
             }
         }
         if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every)) {
-            writer.write_snapshot(U, c.grid, eos, t, step);
+            writer.write_snapshot(U, c.grid, eos, t, step, gptr);
             if (bp.enabled) {
                 bhr_write_radial_profiles(U, turb, c.grid,
                     c.output.out_dir + "/" + c.run_name + "_bhrprof_"

@@ -161,6 +161,7 @@ int main(int argc, char** argv) {
     if (c.physics.flux_compact10 && world_rank == 0)
         BLAST_WARN("flux_scheme = \"compact10\" is serial-only; the MPI run "
                    "falls back to central6");
+    vp.mf_conservative = c.multifluid.conservative;
 
     State U(local_g.nx, local_g.ny, local_g.nz);
     Real start_time = 0.0;
@@ -327,6 +328,9 @@ int main(int argc, char** argv) {
             if (world_rank == 0 && (periodic_spec || slip_spec))
                 writer.append_spectra(h, sp, t, step);
         }
+        // G boundedness / mixing metric (collective: all ranks call the reduce).
+        GStats gs{};
+        if (gptr) gs = mf_g_stats(Gfield, N_global, domain.comm());
         if (world_rank == 0) {
             stats_file << step << ',' << t << ',' << dt << ','
                        << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
@@ -345,6 +349,9 @@ int main(int argc, char** argv) {
                        b.eps_sol, b.eps_dil,
                        (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
                        s.e_total, e_ratio, e_drift, m_ratio, m_drift, p_imbalance);
+            if (gptr)
+                BLAST_INFO("  multifluid G in [{:.4f}, {:.4f}] var={:.3e}",
+                           gs.gmin, gs.gmax, gs.gvar);
         }
     };
 

@@ -146,6 +146,7 @@ int main(int argc, char** argv) {
     vp.abv_cD           = c.afp.C_D;
     vp.abv_disable_weno = c.afp.disable_weno;
     vp.use_compact10    = c.physics.flux_compact10;
+    vp.mf_conservative  = c.multifluid.conservative;
     if (vp.use_compact10)
         BLAST_INFO("inviscid flux: 10th-order conservative compact (smooth) + WENO5 (shocks)");
     if (vp.abv_enabled)
@@ -368,7 +369,10 @@ int main(int argc, char** argv) {
             if (do_stats && gptr) {
                 Real pmn, pmx;
                 mf_pressure_minmax(U, Gfield, pmn, pmx);
-                BLAST_INFO("  multifluid p in [{:.3e}, {:.3e}]", pmn, pmx);
+                const GStats gs = mf_g_stats(Gfield);
+                BLAST_INFO("  multifluid p in [{:.3e}, {:.3e}]  "
+                           "G in [{:.4f}, {:.4f}] var={:.3e}",
+                           pmn, pmx, gs.gmin, gs.gmax, gs.gvar);
             }
         }
         if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every)) {

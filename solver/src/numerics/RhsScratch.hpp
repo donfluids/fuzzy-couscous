@@ -56,6 +56,12 @@ struct RhsScratch {
     bool    use_compact   = false;
     std::unique_ptr<CompactPenta> compact_x, compact_y, compact_z;
 
+    // Multifluid: when true, use the conservative telescoping flux-difference
+    // (local-gamma flux + WENO at contacts) instead of the energy-non-conservative
+    // gated double-flux. Conserves total energy at the cost of (WENO-limited)
+    // pressure oscillations across strong contacts. Set per step by RK3.
+    bool    mf_conservative = false;
+
     // Hyperdissipation. `lap` holds the first composed Laplacian; `lap2`
     // is the second intermediate for the nabla^6 path and is unused when
     // hyper6_coeff == 0.

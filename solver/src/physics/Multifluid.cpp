@@ -146,4 +146,41 @@ void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax
             }
 }
 
+GStats mf_g_stats(const Field3D& G) {
+    const int nx = G.nx(), ny = G.ny(), nz = G.nz();
+    Real gmin = 1e300, gmax = -1e300, sum = 0.0, sum2 = 0.0;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const Real g = G(i, j, k);
+                gmin = std::min(gmin, g); gmax = std::max(gmax, g);
+                sum += g; sum2 += g * g;
+            }
+    const long long N = static_cast<long long>(nx) * ny * nz;
+    const Real mean = sum / N;
+    const Real var = std::max(sum2 / N - mean * mean, 0.0);
+    return {gmin, gmax, mean, var};
+}
+
+#ifdef BLAST_MPI
+GStats mf_g_stats(const Field3D& G, long long N_global, MPI_Comm comm) {
+    const int nx = G.nx(), ny = G.ny(), nz = G.nz();
+    Real gmin = 1e300, gmax = -1e300, sum = 0.0, sum2 = 0.0;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const Real g = G(i, j, k);
+                gmin = std::min(gmin, g); gmax = std::max(gmax, g);
+                sum += g; sum2 += g * g;
+            }
+    Real lo = gmin, hi = gmax, s[2] = {sum, sum2}, sg[2];
+    MPI_Allreduce(&gmin, &lo, 1, MPI_DOUBLE, MPI_MIN, comm);
+    MPI_Allreduce(&gmax, &hi, 1, MPI_DOUBLE, MPI_MAX, comm);
+    MPI_Allreduce(s, sg, 2, MPI_DOUBLE, MPI_SUM, comm);
+    const Real mean = sg[0] / N_global;
+    const Real var = std::max(sg[1] / N_global - mean * mean, 0.0);
+    return {lo, hi, mean, var};
+}
+#endif
+
 }  // namespace blast

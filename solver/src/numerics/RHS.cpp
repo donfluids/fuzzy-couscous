@@ -452,9 +452,10 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
         dilate_sensor_along(theta_dil, dil_tmp, d);
 
         fill_flux_and_alpha(U, d, eos, Flux, alpha, gfn);
-        if (gfn) {
+        if (gfn && !scratch.mf_conservative) {
             // Multifluid: gated double-flux. Fast shared conservative flux in
             // single-fluid cells; frozen-gamma recompute only near a contact.
+            // Non-oscillatory at contacts but NOT energy-conservative.
             add_inviscid_divergence_mf(U, Flux, alpha, theta_dil, *gfn, contact,
                                        d, inv_h, Rhs);
         } else if (scratch.use_compact) {

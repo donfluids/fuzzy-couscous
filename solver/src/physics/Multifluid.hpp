@@ -67,4 +67,15 @@ void mf_advect_G(Field3D& G, const State& U, const Grid& g, const BCSet& bc,
 // non-oscillatory gate (uniform-p contact must stay uniform).
 void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax);
 
+// G boundedness / mixing diagnostic. G is an advected marker, so it must stay
+// within its initial range [G_air, G_products] (discrete maximum principle for
+// monotone upwind at CFL<=1); gmin/gmax leaving that range flags instability.
+// gvar = <(G-<G>)^2> measures interface mixing (bounded above by the initial
+// range, dissipated by the upwind scheme); growth would flag instability.
+struct GStats { Real gmin, gmax, gmean, gvar; };
+GStats mf_g_stats(const Field3D& G);
+#ifdef BLAST_MPI
+GStats mf_g_stats(const Field3D& G, long long N_global, MPI_Comm comm);
+#endif
+
 }  // namespace blast

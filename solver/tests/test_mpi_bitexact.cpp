@@ -262,7 +262,7 @@ int run_sedov_bitexact(int K_steps) {
 // positivity floor across partitions. Slip-wall box, contact centered at the
 // origin (straddles rank boundaries under a 2x2x1 decomp), so internal-face G
 // ghosts carry products vs air -- the key thing the halo must get right.
-int run_multifluid_bitexact(int K_steps) {
+int run_multifluid_bitexact(int K_steps, bool conservative) {
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -279,6 +279,7 @@ int run_multifluid_bitexact(int K_steps) {
 
     IdealGas eos{GammaLaw{}};            // gamma = 1.4 = gamma_air
     ViscousParams vp; vp.mu = 0.0;
+    vp.mf_conservative = conservative;
     const Real Ga = 1.0 / (eos.eos.gamma - 1.0);
 
     MultifluidParams mp;
@@ -316,6 +317,14 @@ int run_multifluid_bitexact(int K_steps) {
         G_ser.fill(Ga);
         mf_init_blast(U_ser, G_ser, global_g, mp);
         mf_fill_G_bcs(G_ser, bc);
+        auto total_E = [&](const State& U) {
+            double s = 0.0;
+            for (int k = 0; k < global_g.nz; ++k)
+                for (int j = 0; j < global_g.ny; ++j)
+                    for (int i = 0; i < global_g.nx; ++i) s += U[RHOE](i, j, k);
+            return s;
+        };
+        const double E0 = total_E(U_ser);
         RK3 driver_ser(global_g.nx, global_g.ny, global_g.nz, U_ser.ng());
         for (int s = 0; s < K_steps; ++s) {
             Real dt = max_dt_hyperbolic(U_ser, global_g, eos, cfl, &G_ser);
@@ -327,11 +336,18 @@ int run_multifluid_bitexact(int K_steps) {
         const Real ee = max_abs_error(ge,   U_ser[RHOE], global_g);
         const Real eg = max_abs_error(gG,   G_ser,       global_g);
         const Real tol = 1e-12;
-        std::printf("Multifluid blast, K=%d steps, ranks=%d: "
-                    "max|dRho|=%.2e max|dMom|=%.2e max|dE|=%.2e max|dG|=%.2e %s\n",
-                    K_steps, size, er, em, ee, eg,
-                    (er < tol && em < tol && ee < tol && eg < tol) ? "PASS" : "FAIL");
-        if (er > tol || em > tol || ee > tol || eg > tol) fail = 1;
+        const double dErel = std::fabs(total_E(U_ser) - E0) / std::fabs(E0);
+        const bool bitexact = (er < tol && em < tol && ee < tol && eg < tol);
+        // Conservative mode must conserve total energy to ~round-off; the
+        // double-flux mode is expected to drift (we only report it there).
+        const bool cons_ok = !conservative || dErel < 1e-10;
+        std::printf("Multifluid blast (%s), K=%d steps, ranks=%d: "
+                    "max|dRho|=%.2e max|dMom|=%.2e max|dE|=%.2e max|dG|=%.2e "
+                    "dE_tot/E0=%.2e %s\n",
+                    conservative ? "conservative" : "double-flux",
+                    K_steps, size, er, em, ee, eg, dErel,
+                    (bitexact && cons_ok) ? "PASS" : "FAIL");
+        if (!bitexact || !cons_ok) fail = 1;
     }
     MPI_Bcast(&fail, 1, MPI_INT, 0, MPI_COMM_WORLD);
     return fail;
@@ -349,7 +365,8 @@ int main(int argc, char** argv) {
     {
         total_fail += run_sod_bitexact(20);
         total_fail += run_sedov_bitexact(15);
-        total_fail += run_multifluid_bitexact(15);
+        total_fail += run_multifluid_bitexact(15, /*conservative=*/false);
+        total_fail += run_multifluid_bitexact(15, /*conservative=*/true);
     }
 
     if (rank == 0)

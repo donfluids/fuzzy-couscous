@@ -162,6 +162,7 @@ Config load_config(const std::string& path) {
 
     auto mf = tbl["multifluid"];
     c.multifluid.enabled = pick<bool>(mf["enabled"],   c.multifluid.enabled);
+    c.multifluid.conservative = pick<bool>(mf["conservative"], c.multifluid.conservative);
     c.multifluid.gamma_p = pick<double>(mf["gamma_p"], c.multifluid.gamma_p);
     c.multifluid.rho_p   = pick<double>(mf["rho_p"],   c.multifluid.rho_p);
     c.multifluid.T_p     = pick<double>(mf["T_p"],     c.multifluid.T_p);

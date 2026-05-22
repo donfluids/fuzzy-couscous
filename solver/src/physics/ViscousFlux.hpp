@@ -79,6 +79,10 @@ struct ViscousParams {
     // compact reconstruction (Lele penta) instead of explicit central6; shock
     // faces still go to WENO5.
     bool use_compact10 = false;
+    // Multifluid: use the conservative telescoping flux (local-gamma + WENO at
+    // contacts) instead of the non-conservative gated double-flux. Conserves
+    // total energy; small pressure oscillations at strong contacts.
+    bool mf_conservative = false;
 };
 
 // Local 3x3 velocity gradient at a cell, dudx[v][d] = d u_v / d x_d,

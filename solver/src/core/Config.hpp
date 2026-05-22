@@ -130,6 +130,10 @@ struct ForcingConfig {
 
 struct MultifluidConfig {
     bool enabled   = false;    // two-gamma multifluid (dense products vs air)
+    // Use the conservative telescoping flux (local-gamma + WENO at contacts)
+    // instead of the energy-non-conservative gated double-flux. Trades small
+    // contact pressure oscillations for total-energy conservation.
+    bool conservative = false;
     Real gamma_p   = 1.25;     // products gamma (larger cv); air uses physics.eos.gamma
     Real rho_p     = 10.0;
     Real T_p       = 100.0;

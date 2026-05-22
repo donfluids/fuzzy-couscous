@@ -57,7 +57,7 @@ def main() -> int:
     run_name = spectra_path.name.replace("_spectra.h5", "")
     stats_path = args.out_dir / (run_name + "_stats.csv")
 
-    s = pd.read_csv(stats_path)
+    s = pd.read_csv(stats_path, skipinitialspace=True)
     t_end = s.time.iloc[-1]
     avg_from = args.avg_from if args.avg_from is not None else 0.75 * t_end
 

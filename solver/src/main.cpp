@@ -92,24 +92,35 @@ ViscousParams to_viscous(const PhysicsConfig& p, const BCSet& bc) {
     return vp;
 }
 
+// Aligned, fixed-width column table (still comma-delimited so it stays valid
+// CSV; pandas reads it with skipinitialspace=True). Each float field is
+// right-justified in kColW; the leading int column is kStepW wide. Headers sit
+// directly over their data columns.
+constexpr int kStepW = 8;    // width of the integer "step" column
+constexpr int kColW  = 16;   // width of each floating-point column
+
 void log_header(std::ostream& os) {
-    os << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,T_mean,"
-          "omega2,div2,eps_total,eps_sol,eps_dil,K_sol,K_dil,e_total,e_int,"
-          "mom_x,mom_y,mom_z,E_ratio,M_ratio\n";
+    os << std::setw(kStepW) << "step";
+    auto h = [&](const char* n) { os << ',' << std::setw(kColW) << n; };
+    for (const char* n : {"time", "dt", "KE", "tke", "u_rms", "M_t", "c_mean",
+             "rho_mean", "p_mean", "T_mean", "omega2", "div2", "eps_total",
+             "eps_sol", "eps_dil", "K_sol", "K_dil", "e_total", "e_int",
+             "mom_x", "mom_y", "mom_z", "E_ratio", "M_ratio"}) h(n);
+    os << '\n';
 }
 
 void log_row(std::ostream& os, int step, Real t, Real dt,
              const VelocityStats& s, const DissipationBudget& b,
              const HelmholtzResult& h, Real e_ratio, Real m_ratio) {
-    os << step << ',' << t << ',' << dt << ','
-       << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
-       << s.c_mean << ',' << s.rho_mean << ',' << s.p_mean << ',' << s.T_mean << ','
-       << b.omega2_mean << ',' << b.div2_mean << ','
-       << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
-       << h.K_sol << ',' << h.K_dil << ','
-       << s.e_total << ',' << s.e_int << ','
-       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << ','
-       << e_ratio << ',' << m_ratio << '\n';
+    os << std::setw(kStepW) << step
+       << std::scientific << std::setprecision(9);
+    auto c = [&](Real v) { os << ',' << std::setw(kColW) << v; };
+    c(t); c(dt); c(s.ke_total); c(s.tke); c(s.u_rms); c(s.M_t);
+    c(s.c_mean); c(s.rho_mean); c(s.p_mean); c(s.T_mean);
+    c(b.omega2_mean); c(b.div2_mean); c(b.eps_total); c(b.eps_sol); c(b.eps_dil);
+    c(h.K_sol); c(h.K_dil); c(s.e_total); c(s.e_int);
+    c(s.mom[0]); c(s.mom[1]); c(s.mom[2]); c(e_ratio); c(m_ratio);
+    os << '\n';
 }
 
 }  // namespace
@@ -235,8 +246,7 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(c.output.out_dir);
     HDF5Writer writer(c.output.out_dir, c.run_name);
     std::ofstream stats_file(c.output.out_dir + "/" + c.run_name + "_stats.csv");
-    stats_file << std::setprecision(12);   // resolve conservation drift in the CSV
-    log_header(stats_file);
+    log_header(stats_file);   // log_row sets its own width/precision per field
 
     FFT3DPlan fft(c.grid.nx, c.grid.ny, c.grid.nz);
 

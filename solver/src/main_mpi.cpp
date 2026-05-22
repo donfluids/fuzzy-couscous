@@ -247,13 +247,18 @@ int main(int argc, char** argv) {
     HDF5Writer writer(c.output.out_dir, c.run_name);
     writer.set_domain(&domain);
 
+    // Aligned, fixed-width CSV table (comma-delimited; pandas: skipinitialspace).
+    constexpr int kStepW = 8, kColW = 16;
     std::ofstream stats_file;
     if (world_rank == 0) {
         stats_file.open(c.output.out_dir + "/" + c.run_name + "_stats.csv");
-        stats_file << std::setprecision(12);   // resolve conservation drift in the CSV
-        stats_file << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,"
-                     "T_mean,omega2,div2,eps_total,eps_sol,eps_dil,e_total,e_int,"
-                     "mom_x,mom_y,mom_z,E_ratio,M_ratio\n";
+        stats_file << std::setw(kStepW) << "step";
+        for (const char* n : {"time", "dt", "KE", "tke", "u_rms", "M_t",
+                 "c_mean", "rho_mean", "p_mean", "T_mean", "omega2", "div2",
+                 "eps_total", "eps_sol", "eps_dil", "e_total", "e_int",
+                 "mom_x", "mom_y", "mom_z", "E_ratio", "M_ratio"})
+            stats_file << ',' << std::setw(kColW) << n;
+        stats_file << '\n';
     }
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
@@ -332,14 +337,16 @@ int main(int argc, char** argv) {
         GStats gs{};
         if (gptr) gs = mf_g_stats(Gfield, N_global, domain.comm());
         if (world_rank == 0) {
-            stats_file << step << ',' << t << ',' << dt << ','
-                       << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
-                       << s.c_mean << ',' << s.rho_mean << ',' << s.p_mean << ','
-                       << s.T_mean << ',' << b.omega2_mean << ',' << b.div2_mean << ','
-                       << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << ','
-                       << s.e_total << ',' << s.e_int << ','
-                       << s.mom[0] << ',' << s.mom[1] << ',' << s.mom[2] << ','
-                       << e_ratio << ',' << m_ratio << '\n';
+            stats_file << std::setw(kStepW) << step
+                       << std::scientific << std::setprecision(9);
+            auto cc = [&](Real v) { stats_file << ',' << std::setw(kColW) << v; };
+            cc(t); cc(dt); cc(s.ke_total); cc(s.tke); cc(s.u_rms); cc(s.M_t);
+            cc(s.c_mean); cc(s.rho_mean); cc(s.p_mean); cc(s.T_mean);
+            cc(b.omega2_mean); cc(b.div2_mean);
+            cc(b.eps_total); cc(b.eps_sol); cc(b.eps_dil);
+            cc(s.e_total); cc(s.e_int);
+            cc(s.mom[0]); cc(s.mom[1]); cc(s.mom[2]); cc(e_ratio); cc(m_ratio);
+            stats_file << '\n';
             stats_file.flush();
             BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
                        "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "

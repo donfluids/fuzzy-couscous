@@ -51,7 +51,7 @@ def main() -> int:
                     help="comma-separated column names to plot mean +/- 1 SE")
     args = ap.parse_args()
 
-    dfs = [pd.read_csv(p) for p in args.csvs]
+    dfs = [pd.read_csv(p, skipinitialspace=True) for p in args.csvs]
     if len(dfs) < 2:
         print("warning: only one realization given; reporting it verbatim",
               file=sys.stderr)

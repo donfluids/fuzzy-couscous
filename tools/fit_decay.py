@@ -68,7 +68,7 @@ def main() -> int:
                     help="write fit figure to this PNG path")
     args = ap.parse_args()
 
-    df = pd.read_csv(args.csv)
+    df = pd.read_csv(args.csv, skipinitialspace=True)
     if args.col not in df.columns:
         print(f"error: column {args.col} not in {list(df.columns)}", file=sys.stderr)
         return 1

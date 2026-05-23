@@ -43,7 +43,7 @@ their own clean-room solver.
   quantified vs. physical dissipation (effective-Re error, `ε_sol`/`ε_dil`
   identities). Source: `dissipation_budget`.
 - **Decay-exponent uncertainty** — width of the bootstrap CI on the turbulence decay
-  exponent (M3). Source: `tools/fit_decay.py`.
+  exponent (M3). Source: `postprocessing/tools/fit_decay.py`.
 - **Regime coverage with tests** — fraction of target regimes (single/multi-fluid,
   BHR, CJ detonation, closed-chamber) backed by a passing verification and validation
   case. Source: ctest + examples.

@@ -11,64 +11,90 @@ and a `ν_h ∇⁴ U` hyperdissipation term as the LES sink at high wavenumbers.
 ## Layout
 
 ```
-solver/             C++ source, CMake build, GoogleTest suite
-solver/examples/    runnable TOML configs (TGV, chamber, paper Case 1, ...)
-scripts/            Python analysis & diagnostics (reads runs/ and data/)
-tools/              Python post-processing (decay fits, spectra plots, ensemble avg)
-runs/               simulation output dirs (out_*/: HDF5 snapshots, stats CSV, spectra) — gitignored
-data/               derived data products (.npz) and run logs (.log) — gitignored
-paper/figures/      committed figures for the manuscript revisions
+solver/                C++ source, CMake build, GoogleTest suite
+solver/examples/       runnable TOML configs (TGV, chamber, paper Case 1, TNT, ...)
+postprocessing/        Python post-processing (one folder)
+  paths.py               shared resolver: REPO_ROOT, RUNS, DATA, FIGS, run_dir()
+  tools/                 reusable utilities (path taken as a CLI arg)
+  scripts/               case-specific analyses (resolve runs by name)
+  scripts/scaling/       strong-scaling / PGO sweep analysis
+runs/                  all simulation output, grouped by case type — gitignored data
+  <category>/out_*/        blast/ tgv/ chamber/ tnt/ bhr/ scaling/ hit/ misc/
+  README.md, MANIFEST.md   taxonomy + old→new migration map (tracked)
+data/                  derived data products (.npz) and run logs (.log) — gitignored
+scaling/               strong-scaling run drivers (run_*.sh) + committed results
+docs/                  capabilities, numerics, diagnostics, mpi, roadmap, equations PDF
+paper/figures/         committed figures for the manuscript revisions
 ```
 
-Run outputs live under `runs/` (one `out_*/` directory per run) and the
-analysis scripts in `scripts/` resolve them via `RUNS = ROOT/"runs"` and
-`DATA = ROOT/"data"`. Both `runs/` and `data/` hold regenerable artifacts
-and are gitignored.
+Run outputs live under `runs/<category>/` (one `out_*/` directory per run). The
+analysis code resolves them through one module, `postprocessing/paths.py`:
+`run_dir("out_blast_128_budget_seed1")` → `runs/blast/out_blast_128_budget_seed1`,
+so scripts never hardcode a category and re-classification touches only that file.
+`runs/` (run data) and `data/` (derived `.npz`) hold regenerable artifacts and are
+gitignored; the taxonomy and the reversible migration tool are documented in
+[`runs/README.md`](runs/README.md). See [Documentation](#documentation) for the
+deep reference docs.
+
+## Requirements
+
+| Layer | Language / tools |
+|---|---|
+| Solver | C++20, CMake ≥ 3.20, GCC ≥ 13 or Clang ≥ 17, OpenMP |
+| Solver libs | FFTW3 (`libfftw3-dev`), HDF5 (`libhdf5-dev`), spdlog (`libspdlog-dev`), toml++ (`libtomlplusplus-dev`), GoogleTest |
+| MPI (optional) | OpenMPI (`libopenmpi-dev`, `openmpi-bin`), parallel HDF5 (`libhdf5-openmpi-dev`), FFTW3-MPI (`libfftw3-mpi-dev`) |
+| Post-processing | Python ≥ 3.10 + `requirements.txt` (numpy, scipy, h5py, pandas, matplotlib) |
+| Equations PDF (optional) | `tectonic` (single binary, no root) or a TeX distribution — see [`docs/equations/`](docs/equations/) |
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+```
 
 ## Build & test
+
+Run cmake from the **repo root** (so paths in this README resolve and runs land
+in the top-level `runs/`).
 
 ### Serial (OpenMP only)
 
 ```bash
-cd solver
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+cmake -S solver -B solver/build -DCMAKE_BUILD_TYPE=Release
+cmake --build solver/build -j
+ctest --test-dir solver/build --output-on-failure
 ```
-
-Requires: GCC ≥ 13 or Clang ≥ 17, CMake ≥ 3.20, FFTW3 (`libfftw3-dev`), HDF5
-(`libhdf5-dev`), spdlog (`libspdlog-dev`), toml++ (`libtomlplusplus-dev`),
-GoogleTest, OpenMP.
 
 ### MPI (OpenMPI)
 
 ```bash
-cmake -S solver -B build_mpi -DBLAST_MPI=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build_mpi -j
-ctest --test-dir build_mpi --output-on-failure   # also runs the MPI halo test at N = 1, 2, 4
-mpirun -n 4 ./build_mpi/blast_les_mpi solver/examples/paper_case1.toml
+./solver/cmake/configure-mpi.sh                 # configures solver/build_mpi (ABI-safe)
+cmake --build solver/build_mpi -j
+./solver/run_mpi.sh ctest --test-dir solver/build_mpi --output-on-failure
 ```
 
-Adds: OpenMPI (`libopenmpi-dev`, `openmpi-bin`), parallel HDF5
-(`libhdf5-openmpi-dev`), FFTW3-MPI (`libfftw3-mpi-dev`). Builds a second
-library `blast_core_mpi` and a second executable `blast_les_mpi` alongside
+`configure-mpi.sh` / `run_mpi.sh` pin the apt OpenMPI + FFTW3 stack to avoid a
+sideloaded-MPI ABI clash (see
+[`docs/solutions/build-errors/`](docs/solutions/build-errors/)). The MPI build
+adds a second library `blast_core_mpi` and executable `blast_les_mpi` alongside
 the serial ones; the serial path is unaffected.
 
 ## Run a simulation
 
+Run from the **repo root** so the TOML `out_dir = "runs/<category>/..."` lands in
+the top-level `runs/` tree.
+
 ### Serial
 
 ```bash
-./build/blast_les examples/paper_case1.toml          # production: 256³ chamber
-./build/blast_les examples/tgv_re1600_64_hyper2.toml # TGV Re=1600 LES on 64³
-./build/blast_les examples/chamber_smoke.toml        # 32³ smoke test
+./solver/build/blast_les solver/examples/paper_case1.toml          # production: 256³ chamber
+./solver/build/blast_les solver/examples/tgv_re1600_64_hyper2.toml # TGV Re=1600 LES on 64³
+./solver/build/blast_les solver/examples/chamber_smoke.toml        # 32³ smoke test
 ```
 
 ### MPI
 
 ```bash
-mpirun -n 4  ./build_mpi/blast_les_mpi examples/paper_case1.toml
-mpirun -n 16 ./build_mpi/blast_les_mpi examples/paper_case1.toml
+./solver/run_mpi.sh mpirun -n 4  ./solver/build_mpi/blast_les_mpi solver/examples/paper_case1.toml
+./solver/run_mpi.sh mpirun -n 16 ./solver/build_mpi/blast_les_mpi solver/examples/paper_case1.toml
 ```
 
 3D Cartesian decomposition via `MPI_Dims_create` chooses `(npx, npy, npz)`
@@ -85,13 +111,29 @@ time-series index (ParaView-loadable), a stats CSV, and a spectra HDF5.
 
 ## Post-processing
 
+All analysis lives in `postprocessing/` (install deps with
+`pip install -r requirements.txt`). Scripts resolve runs through
+`postprocessing/paths.py`; see [`postprocessing/README.md`](postprocessing/README.md).
+
 ```bash
-PY=/path/to/venv/python    # numpy + pandas + h5py + matplotlib
-$PY tools/fit_decay.py     out_dir/run_stats.csv  --col tke --plot decay.png
-$PY tools/plot_spectra.py  out_dir/run_spectra.h5 -o spectra.png --solenoidal
-$PY tools/ensemble_average.py out_a/*_stats.csv out_b/*_stats.csv \
-                              --out ens.csv --plot tke,M_t,K_dil
+python3 postprocessing/tools/fit_decay.py \
+        runs/blast/out_blast_128_budget_seed1/blast_128_budget_seed1_stats.csv --col tke --plot decay.png
+python3 postprocessing/tools/plot_spectra.py \
+        runs/tgv/out_tgv64_hyper2/tgv_re1600_64_hyper2_spectra.h5 -o spectra.png --solenoidal
+python3 postprocessing/scripts/compare_mf_sg_spectra.py 64    # resolves cj_t5/sg_t5 via run_dir()
 ```
+
+## Documentation
+
+The sections below summarize the method; the full reference lives in
+[`docs/`](docs/):
+
+- [`docs/capabilities.md`](docs/capabilities.md) — what the solver does, at a glance
+- [`docs/numerics.md`](docs/numerics.md) — schemes, sensors, LES sink, test suite
+- [`docs/diagnostics.md`](docs/diagnostics.md) — stats, budgets, conservation monitors
+- [`docs/mpi.md`](docs/mpi.md) — decomposition, I/O, distributed spectra, scaling
+- [`docs/equations/governing-equations.pdf`](docs/equations/) — every governing equation (LaTeX → PDF)
+- [`docs/roadmap.md`](docs/roadmap.md) — future / deferred work
 
 ## Numerical method
 
@@ -128,7 +170,7 @@ Both modes share one dispatcher (`physics/MixtureEOS.hpp`) that maps
 validated by 1-D EOS self-consistency (CJ sound speed `c_CJ = D − u_CJ`), a
 serial/MPI bit-exact regression, and a free-air blast whose peak-overpressure
 envelope decays between the near-field `Z⁻³` and far-field `Z⁻¹` slopes
-(`scripts/blast_overpressure.py`). Afterburning (reactive heat release) is a
+(`postprocessing/scripts/blast_overpressure.py`). Afterburning (reactive heat release) is a
 deferred follow-on.
 
 ## Diagnostics (the paper-revision deliverable)
@@ -197,14 +239,14 @@ not be conflated:
   This is whether the dilatational field actually cascades, independent of how
   much energy it holds.
 
-`tools/spectrum_shape.py` reports both axes separately from a `<run>_spectra.h5`
+`postprocessing/tools/spectrum_shape.py` reports both axes separately from a `<run>_spectra.h5`
 (energy block + turbulence block) and is the shared shape/energy utility behind
-`scripts/spectrum_components.py` and `tools/plot_spectra.py --solenoidal`.
+`postprocessing/scripts/spectrum_components.py` and `postprocessing/tools/plot_spectra.py --solenoidal`.
 
 The dilatational field itself further contains **pseudo-sound** (the dilatation
 slaved to the vortical turbulence — genuine *dilatational turbulence*) and
 **true sound** (freely-propagating / closed-chamber standing acoustics).
-`scripts/pseudosound_split.py` separates them from the full-field snapshots via a
+`postprocessing/scripts/pseudosound_split.py` separates them from the full-field snapshots via a
 pressure Poisson solve sourced by the *solenoidal* velocity
 (`∇²p_h = -∂_i∂_j(ρ u_s,i u_s,j)`; acoustic `p_a = p' - p_h`), and reports the
 pseudo-sound/acoustic pressure variances and spectra. For the blast runs the
@@ -289,9 +331,9 @@ cascade outpace the sink.
 |---|---|
 | M1 effective Reynolds | `dissipation_budget` separates resolved viscous ε; numerical sink quantified via `hyper_coeff` |
 | M2 grid convergence | re-run any example at varying `nx` |
-| M3 decay exponent + CI | `tools/fit_decay.py` (2000-sample bootstrap) |
+| M3 decay exponent + CI | `postprocessing/tools/fit_decay.py` (2000-sample bootstrap) |
 | M4 solenoidal/dilatational | `helmholtz_decompose` + per-step `K_sol`, `K_dil`, `ε_sol`, `ε_dil` |
 | M5 / M8 tke vs EKE | `velocity_stats` reports both with mean removal |
-| M6 ensembles | `ensemble_seed` + multi-mode random IC + `tools/ensemble_average.py` |
+| M6 ensembles | `ensemble_seed` + multi-mode random IC + `postprocessing/tools/ensemble_average.py` |
 | M7 early-time sanity | configurable `snapshot_every`; pre/post first-reflection capture |
 | M9 CJ initial condition | `ic_cj_detonation_3d` (Williams exact relations, validated to 1e-6) |

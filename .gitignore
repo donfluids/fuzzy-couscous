@@ -25,3 +25,6 @@ runs/*/*
 # Permit committed figures under paper/figures/
 !paper/figures/*.png
 !paper/figures/*.pdf
+
+# Permit the committed governing-equations PDF (built from LaTeX source)
+!docs/equations/*.pdf

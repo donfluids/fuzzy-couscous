@@ -42,7 +42,7 @@ T_p=100.0
 rho_a=1.0
 T_a=1.0
 [output]
-out_dir="out_blast_64_2fluid"
+out_dir="runs/blast/out_blast_64_2fluid"
 snapshot_every=1000000
 stats_every=1
 write_spectra=false

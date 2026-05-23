@@ -49,7 +49,7 @@ dt_max         = 1.0
 max_steps      = 200000
 
 [output]
-out_dir          = "out_blast_128_budget_seed2"
+out_dir          = "runs/blast/out_blast_128_budget_seed2"
 snapshot_every   = 100
 stats_every      = 20
 checkpoint_every = 5000

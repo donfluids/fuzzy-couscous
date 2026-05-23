@@ -15,8 +15,12 @@ __pycache__/
 *.npz
 *.log
 *.gcda
-scaling/pgo_profile/
-scaling/pgo_train_*_out/
+
+# Consolidated runs/ tree: ignore all run data (out_*/, scaling runs_*/logs_*/
+# pgo_*, HDF5, CSV, per-run TOML clones), but keep the tracked structure --
+# runs/README.md, runs/MANIFEST.md, and per-category runs/<cat>/.gitkeep.
+runs/*/*
+!runs/*/.gitkeep
 
 # Permit committed figures under paper/figures/
 !paper/figures/*.png

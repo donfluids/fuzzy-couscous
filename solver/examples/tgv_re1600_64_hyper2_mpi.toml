@@ -39,7 +39,7 @@ max_steps      = 100000
 enabled = false
 
 [output]
-out_dir          = "out_tgv64_hyper2_mpi"
+out_dir          = "runs/tgv/out_tgv64_hyper2_mpi"
 snapshot_every   = 50000
 stats_every      = 10
 write_spectra    = true

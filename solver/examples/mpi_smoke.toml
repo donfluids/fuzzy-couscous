@@ -45,7 +45,7 @@ dt_max         = 1.0
 max_steps      = 100
 
 [output]
-out_dir          = "out_mpi_smoke"
+out_dir          = "runs/misc/out_mpi_smoke"
 snapshot_every   = 5
 stats_every      = 1
 checkpoint_every = 0

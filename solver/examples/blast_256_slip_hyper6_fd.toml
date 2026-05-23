@@ -52,7 +52,7 @@ max_steps      = 400000
 enabled = false
 
 [output]
-out_dir          = "out_blast_256_slip_hyper6_fd"
+out_dir          = "runs/blast/out_blast_256_slip_hyper6_fd"
 snapshot_every   = 1000000
 stats_every      = 20
 checkpoint_every = 5000

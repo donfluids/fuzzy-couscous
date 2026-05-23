@@ -49,7 +49,7 @@ dt_max         = 1.0
 max_steps      = 500000
 
 [output]
-out_dir         = "out_paper_case1"
+out_dir         = "runs/chamber/out_paper_case1"
 snapshot_every  = 200
 stats_every     = 10
 write_spectra   = true

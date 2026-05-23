@@ -54,7 +54,7 @@ max_steps      = 200000
 enabled = false
 
 [output]
-out_dir          = "out_blast_256_match128"
+out_dir          = "runs/blast/out_blast_256_match128"
 snapshot_every   = 100
 stats_every      = 10
 checkpoint_every = 1000000

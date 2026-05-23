@@ -33,7 +33,7 @@ t_end          = 0.4   # 0.1 past the original t_end
 max_steps      = 5000
 
 [output]
-out_dir          = "out_chamber_smoke_resumed"
+out_dir          = "runs/chamber/out_chamber_smoke_resumed"
 snapshot_every   = 50
 stats_every      = 5
 checkpoint_every = 0

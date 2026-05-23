@@ -42,7 +42,7 @@ every   = 5
 sigma   = 0.15
 
 [output]
-out_dir          = "out_tgv32_filter"
+out_dir          = "runs/tgv/out_tgv32_filter"
 snapshot_every   = 50000
 stats_every      = 10
 write_spectra    = true

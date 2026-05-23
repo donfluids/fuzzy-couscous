@@ -43,7 +43,7 @@ max_steps      = 30
 enabled = false
 
 [output]
-out_dir          = "out_tgv64_hyper2_pgo_train"
+out_dir          = "runs/tgv/out_tgv64_hyper2_pgo_train"
 snapshot_every   = 1000000
 stats_every      = 10
 checkpoint_every = 0

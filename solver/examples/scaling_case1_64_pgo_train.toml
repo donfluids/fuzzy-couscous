@@ -54,7 +54,7 @@ dt_max         = 1.0
 max_steps      = 30
 
 [output]
-out_dir          = "out_scaling_case1_64_pgo_train"
+out_dir          = "runs/scaling/out_scaling_case1_64_pgo_train"
 snapshot_every   = 1000000
 stats_every      = 1
 checkpoint_every = 0

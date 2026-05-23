@@ -45,7 +45,7 @@ max_steps      = 300
 enabled = false
 
 [output]
-out_dir          = "out_tgv256_hyper2_perf"
+out_dir          = "runs/tgv/out_tgv256_hyper2_perf"
 snapshot_every   = 1000000
 stats_every      = 50
 checkpoint_every = 0

@@ -43,7 +43,7 @@ enabled=false
 feedback=false
 b_seed=0.5
 [output]
-out_dir="out_blast_128_fineLES"
+out_dir="runs/blast/out_blast_128_fineLES"
 snapshot_every=1000000
 stats_every=20
 write_spectra=true

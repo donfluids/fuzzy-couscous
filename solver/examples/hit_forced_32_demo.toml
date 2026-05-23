@@ -50,7 +50,7 @@ seed       = 12345
 enabled = false
 
 [output]
-out_dir          = "out_hit_forced_32"
+out_dir          = "runs/hit/out_hit_forced_32"
 snapshot_every   = 50000
 stats_every      = 20
 write_spectra    = true

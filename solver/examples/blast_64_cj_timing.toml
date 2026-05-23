@@ -40,7 +40,7 @@ rho_e=10.0
 T_e=1.0
 cj_u_frac=0.0
 [output]
-out_dir="out_blast_64_cj_timing"
+out_dir="runs/blast/out_blast_64_cj_timing"
 snapshot_every=100000
 stats_every=5
 write_spectra=false

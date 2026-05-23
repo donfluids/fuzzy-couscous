@@ -117,6 +117,33 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
 - enstrophy `⟨|ω|²⟩` and dilatation-squared `⟨(∇·u)²⟩` independently
 - Helmholtz solenoidal/dilatational kinetic-energy split + per-shell spectra
 
+The Helmholtz split exposes two **distinct** dilatational quantities that must
+not be conflated:
+
+- **dilatational energy** (magnitude) — `K_dil = ∫ E_dil(k) dk` and its
+  fractions `K_dil/K_tot`, `K_dil/K_sol`. This is how much kinetic energy is
+  compressible; a single standing compression already has dilatational energy.
+- **dilatational turbulence** (spectral shape) — the local slope
+  `d log E_dil / d log k` and the width of any *contiguous* power-law range.
+  This is whether the dilatational field actually cascades, independent of how
+  much energy it holds.
+
+`tools/spectrum_shape.py` reports both axes separately from a `<run>_spectra.h5`
+(energy block + turbulence block) and is the shared shape/energy utility behind
+`scripts/spectrum_components.py` and `tools/plot_spectra.py --solenoidal`.
+
+The dilatational field itself further contains **pseudo-sound** (the dilatation
+slaved to the vortical turbulence — genuine *dilatational turbulence*) and
+**true sound** (freely-propagating / closed-chamber standing acoustics).
+`scripts/pseudosound_split.py` separates them from the full-field snapshots via a
+pressure Poisson solve sourced by the *solenoidal* velocity
+(`∇²p_h = -∂_i∂_j(ρ u_s,i u_s,j)`; acoustic `p_a = p' - p_h`), and reports the
+pseudo-sound/acoustic pressure variances and spectra. For the blast runs the
+compressible field is ~100% acoustic with negligible pseudo-sound — consistent
+with the weak vortical turbulence and the absence of any `k^-5/3` cascade. (KE
+attribution via equipartition is an estimate; the pressure split is exact. See
+the script header for caveats — low-Mach validity, shocklets, periodic basis.)
+
 ## Test suite (44 serial + 4 MPI binaries × 3 rank counts, all passing)
 
 | Suite | What it verifies | Wall (9965 est.) |

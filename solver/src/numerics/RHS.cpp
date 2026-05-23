@@ -1,6 +1,8 @@
 #include "numerics/RHS.hpp"
 
 #include "core/Field3D.hpp"
+#include "numerics/ArtificialDiffusivity.hpp"
+#include "numerics/CompactScheme.hpp"
 #include "numerics/Ducros.hpp"
 #include "numerics/Gradients.hpp"
 #include "numerics/HyperdissipationSpectral.hpp"
@@ -13,7 +15,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <omp.h>
+#include <vector>
 
 namespace blast {
 
@@ -38,7 +42,8 @@ Index stride_for(int d, const Field3D& f) {
 }
 
 void fill_flux_and_alpha(const State& U, int d, const IdealGas& eos,
-                         State& Flux, Field3D& alpha, const Field3D* gfn) {
+                         State& Flux, Field3D& alpha, const Field3D* gfn,
+                         const MixtureEOS* mix) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
     const auto& rho = U[RHO];
     const auto& mx  = U[RHOU];
@@ -62,9 +67,14 @@ void fill_flux_and_alpha(const State& U, int d, const IdealGas& eos,
                 const Real v = C.my * inv_rho;
                 const Real w = C.mz * inv_rho;
                 const Real ke = 0.5 * C.rho * (u*u + v*v + w*w);
-                const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;
-                const Real p  = (gloc - 1.0) * (C.rhoE - ke);
-                const Real c  = std::sqrt(gloc * p / C.rho);
+                Real p, c;
+                if (mix && gfn) {
+                    mix->p_c((*gfn)(i,j,k), C.rho, C.rhoE - ke, p, c);
+                } else {
+                    const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;
+                    p = (gloc - 1.0) * (C.rhoE - ke);
+                    c = std::sqrt(gloc * p / C.rho);
+                }
                 const Real ud = (d == 0 ? u : d == 1 ? v : w);
                 FluxVec F = euler_flux(C, p, d);
                 Fr(i,j,k) = F.f[RHO];
@@ -193,7 +203,8 @@ void dilate_sensor_along(Field3D& theta, Field3D& scratch, int d) {
 void add_inviscid_divergence_mf(const State& U, const State& Flux,
                                 const Field3D& alpha, const Field3D& theta,
                                 const Field3D& G, const Field3D& contact,
-                                int d, Real inv_dh, State& Rhs) {
+                                int d, Real inv_dh, State& Rhs,
+                                const MixtureEOS* mix) {
     const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
     const int di = (d == 0), dj = (d == 1), dk = (d == 2);
     const Index s = stride_for(d, Flux[RHO]);
@@ -234,8 +245,14 @@ void add_inviscid_divergence_mf(const State& U, const State& Flux,
                 }
 
                 // Double-flux: recompute the 7-cell local stencil with the
-                // update cell's frozen gamma (component-major, stride 1).
-                const Real gm1 = 1.0 / G(i, j, k);     // gamma - 1
+                // update cell's frozen EOS (component-major, stride 1). For
+                // two-gamma this freezes gamma = gamma_c; for JWL it freezes the
+                // EOS *choice* (products vs air) of the update cell across the
+                // stencil (the JWL params are global). mix==nullptr keeps the
+                // original two-gamma arithmetic bit-for-bit.
+                const bool prod_c = mix && mix->is_products(G(i, j, k));
+                const Real gm1 = mix ? mix->frozen_gm1(G(i, j, k))   // gamma - 1
+                                     : 1.0 / G(i, j, k);
                 const Real gam = 1.0 + gm1;
                 Real Fl[NCONS][7], Ul[NCONS][7], al[7];
                 for (int t2 = -3; t2 <= 3; ++t2) {
@@ -247,14 +264,19 @@ void add_inviscid_divergence_mf(const State& U, const State& Flux,
                     const Real inv = 1.0 / r;
                     const Real u = ru*inv, v = rv*inv, w = rw*inv;
                     const Real ke = 0.5*(ru*u + rv*v + rw*w);
-                    const Real p  = gm1 * (Ec - ke);            // frozen-gamma p
+                    Real p, c;
+                    if (mix) {
+                        mix->p_c_frozen(prod_c, gm1, gam, r, Ec - ke, p, c);
+                    } else {
+                        p = gm1 * (Ec - ke);                    // frozen-gamma p
+                        c = std::sqrt(std::max(gam*p/r, 0.0));
+                    }
                     const Real ud = (d == 0 ? u : d == 1 ? v : w);
                     Ul[RHO ][t] = r;   Fl[RHO ][t] = r*ud;
                     Ul[RHOU][t] = ru;  Fl[RHOU][t] = ru*ud + (d==0)*p;
                     Ul[RHOV][t] = rv;  Fl[RHOV][t] = rv*ud + (d==1)*p;
                     Ul[RHOW][t] = rw;  Fl[RHOW][t] = rw*ud + (d==2)*p;
                     Ul[RHOE][t] = Ec;  Fl[RHOE][t] = (Ec + p)*ud;
-                    const Real c = std::sqrt(std::max(gam*p/r, 0.0));
                     al[t] = std::fabs(ud) + c;
                 }
                 const Real alpha_hi = std::max(al[3], al[4]);   // cells i, i+1
@@ -314,10 +336,85 @@ void add_face_flux_divergence(const State& U, const State& Flux,
     }
 }
 
+// Line-oriented hybrid divergence: 10th-order conservative compact reconstruction
+// in smooth regions, WENO5 at shock-flagged faces. Per line along d we solve the
+// compact pentadiagonal system for all face fluxes, override shock faces with the
+// Lax-Friedrichs WENO flux, then take the conservative difference. Each face
+// carries exactly one value (shared by both neighbours) so conservation
+// telescopes bit-for-bit, identical to the explicit central6 path.
+void add_face_flux_divergence_compact(const State& U, const State& Flux,
+                                      const Field3D& alpha, const Field3D& theta,
+                                      int d, Real inv_h, State& Rhs,
+                                      const CompactPenta& cp) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const int nL  = (d == 0 ? nx : d == 1 ? ny : nz);
+    const int nt1 = (d == 0 ? ny : nx);              // first transverse extent
+    const int nt2 = (d == 0 ? nz : d == 1 ? nz : ny);  // second transverse extent
+    constexpr int NG = kCompactGhost;                // gather halo
+
+    auto IJK = [d](int m, int t1, int t2, int& i, int& j, int& k) {
+        if (d == 0)      { i = m;  j = t1; k = t2; }
+        else if (d == 1) { i = t1; j = m;  k = t2; }
+        else             { i = t1; j = t2; k = m;  }
+    };
+
+#pragma omp parallel
+    {
+        std::vector<Real> Fb[NCONS], Qb[NCONS], fc[NCONS];
+        for (int v = 0; v < NCONS; ++v) {
+            Fb[v].resize(nL + 2 * NG);
+            Qb[v].resize(nL + 2 * NG);
+            fc[v].resize(nL + 1);
+        }
+        std::vector<Real> ab(nL + 2 * NG), tb(nL + 2 * NG);
+
+#pragma omp for collapse(2) schedule(static)
+        for (int t2 = 0; t2 < nt2; ++t2)
+            for (int t1 = 0; t1 < nt1; ++t1) {
+                // Gather the line (node fluxes, conserved state, alpha, sensor)
+                // with NG ghosts into contiguous buffers.
+                for (int m = -NG; m < nL + NG; ++m) {
+                    int i, j, k; IJK(m, t1, t2, i, j, k);
+                    const Index off = Flux[0].idx_(i, j, k);
+                    for (int v = 0; v < NCONS; ++v) {
+                        Fb[v][m + NG] = Flux[v].raw()[off];
+                        Qb[v][m + NG] = U[v].raw()[off];
+                    }
+                    ab[m + NG] = alpha.raw()[off];
+                    tb[m + NG] = theta.raw()[off];
+                }
+                // Compact reconstruction (node ptr = cell 0 = buf + NG).
+                for (int v = 0; v < NCONS; ++v)
+                    cp.reconstruct_wall(Fb[v].data() + NG, fc[v].data());
+                // Override shock faces with WENO5 (LF split). Face f sits between
+                // cells f-1 and f; the sensor is dilated so the cell max covers
+                // the stencil footprint.
+                for (int f = 0; f <= nL; ++f) {
+                    const Real th = std::max(tb[NG + f - 1], tb[NG + f]);
+                    if (th > kSensorThreshold) {
+                        const Real af = std::max(ab[NG + f - 1], ab[NG + f]);
+                        for (int v = 0; v < NCONS; ++v)
+                            fc[v][f] = face_flux(Fb[v].data() + NG + (f - 1),
+                                                 Qb[v].data() + NG + (f - 1),
+                                                 af, 1, true);
+                    }
+                }
+                // Conservative difference.
+                for (int m = 0; m < nL; ++m) {
+                    int i, j, k; IJK(m, t1, t2, i, j, k);
+                    const Index off = Rhs[0].idx_(i, j, k);
+                    for (int v = 0; v < NCONS; ++v)
+                        Rhs[v].raw()[off] -= (fc[v][m + 1] - fc[v][m]) * inv_h;
+                }
+            }
+    }
+}
+
 }  // namespace
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          RhsScratch& scratch, State& Rhs, const Field3D* gfn) {
+                          RhsScratch& scratch, State& Rhs, const Field3D* gfn,
+                          const MixtureEOS* mix) {
     for (int v = 0; v < NCONS; ++v) Rhs.fill(v, 0.0);
 
     Field3D& theta     = scratch.theta;
@@ -326,14 +423,21 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
     Field3D& dil_tmp   = scratch.dilate_tmp;
     State&   Flux      = scratch.Flux_inv;
 
-    compute_sensor(U, g, eos, theta);
+    compute_sensor(U, g, eos, theta, gfn, mix);
+
+    // LAD-only mode: suppress the Ducros/WENO sensor so the central scheme runs
+    // everywhere and localized artificial diffusivity is the sole shock sink.
+    if (scratch.disable_weno) theta.fill(0.0);
 
     // Multifluid: shock sensors miss CONTACTS (uniform p,u; jump in rho/gamma),
     // so the high-order central scheme rings at the products-air interface. Force
-    // WENO there by firing the sensor on a relative G = 1/(gamma-1) jump, and
-    // flag the cell in `contact` so the gated double-flux activates near it.
+    // WENO there by firing the sensor on a marker jump, and flag the cell in
+    // `contact` so the gated double-flux activates near it. Two-gamma uses a
+    // RELATIVE jump of G = 1/(gamma-1); JWL uses an ABSOLUTE jump of the mass
+    // fraction phi (phi_air = 0 makes a relative test ill-posed).
     Field3D& contact = scratch.contact;
     if (gfn) {
+        const bool jwl_marker = (mix && mix->mode == MixMode::JWL);
         const Field3D& G = *gfn;
         const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
         contact.fill(0.0);
@@ -352,7 +456,9 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
                     m = std::max(m, std::fabs(G(i,j-1,k)-Gc));
                     m = std::max(m, std::fabs(G(i,j,k+1)-Gc));
                     m = std::max(m, std::fabs(G(i,j,k-1)-Gc));
-                    if (m / (Gc + 1e-30) > 0.01) {
+                    const bool fire = jwl_marker ? (m > 0.01)
+                                                 : (m / (Gc + 1e-30) > 0.01);
+                    if (fire) {
                         contact(i,j,k) = 1.0;
                         if (i >= -1 && i <= nx && j >= -1 && j <= ny && k >= -1 && k <= nz)
                             theta(i,j,k) = 1.0;
@@ -369,12 +475,23 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
         for (Index i = 0; i < N; ++i) theta_dil.raw()[i] = theta.raw()[i];
         dilate_sensor_along(theta_dil, dil_tmp, d);
 
-        fill_flux_and_alpha(U, d, eos, Flux, alpha, gfn);
-        if (gfn) {
+        fill_flux_and_alpha(U, d, eos, Flux, alpha, gfn, mix);
+        if (gfn && !scratch.mf_conservative) {
             // Multifluid: gated double-flux. Fast shared conservative flux in
-            // single-fluid cells; frozen-gamma recompute only near a contact.
+            // single-fluid cells; frozen-EOS recompute only near a contact.
+            // Non-oscillatory at contacts but NOT energy-conservative.
             add_inviscid_divergence_mf(U, Flux, alpha, theta_dil, *gfn, contact,
-                                       d, inv_h, Rhs);
+                                       d, inv_h, Rhs, mix);
+        } else if (scratch.use_compact) {
+            // 10th-order conservative compact reconstruction (smooth) + WENO5
+            // (shocks). Build/cache the per-direction pentadiagonal solver.
+            const int nL = (d == 0 ? U.nx() : d == 1 ? U.ny() : U.nz());
+            auto& slot = (d == 0 ? scratch.compact_x
+                                 : d == 1 ? scratch.compact_y
+                                          : scratch.compact_z);
+            if (!slot || slot->n() != nL) slot = std::make_unique<CompactPenta>(nL);
+            add_face_flux_divergence_compact(U, Flux, alpha, theta_dil, d, inv_h,
+                                             Rhs, *slot);
         } else {
             add_face_flux_divergence(U, Flux, alpha, theta_dil, d, inv_h, Rhs);
         }
@@ -386,17 +503,17 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
 }
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          State& Rhs, const Field3D* gfn) {
+                          State& Rhs, const Field3D* gfn, const MixtureEOS* mix) {
     // Standalone path used by tests / ad-hoc callers. Allocates scratch
     // once on the stack; production runs go through the RhsScratch
     // overload via RK3.
     RhsScratch s;
     s.allocate(U.nx(), U.ny(), U.nz(), U.ng());
-    compute_rhs_inviscid(U, g, eos, s, Rhs, gfn);
+    compute_rhs_inviscid(U, g, eos, s, Rhs, gfn, mix);
 }
 
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl, const Field3D* gfn) {
+                       Real cfl, const Field3D* gfn, const MixtureEOS* mix) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
     const auto& rho = U[RHO];
     const auto& mx  = U[RHOU];
@@ -415,9 +532,14 @@ Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                 const Real iv = my(i,j,k) / r;
                 const Real iw = mz(i,j,k) / r;
                 const Real ke = 0.5 * r * (iu*iu + iv*iv + iw*iw);
-                const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;
-                const Real p  = (gloc - 1.0) * (E(i,j,k) - ke);
-                const Real c  = std::sqrt(gloc * p / r);
+                Real p, c;
+                if (mix && gfn) {
+                    mix->p_c((*gfn)(i,j,k), r, E(i,j,k) - ke, p, c);
+                } else {
+                    const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;
+                    p = (gloc - 1.0) * (E(i,j,k) - ke);
+                    c = std::sqrt(gloc * p / r);
+                }
                 const Real lx = (std::fabs(iu) + c) / dx;
                 const Real ly = (ny > 1) ? (std::fabs(iv) + c) / dy : 0.0;
                 const Real lz = (nz > 1) ? (std::fabs(iw) + c) / dz : 0.0;
@@ -450,8 +572,9 @@ Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
 
 #ifdef BLAST_MPI
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl, MPI_Comm comm) {
-    Real dt_local = max_dt_hyperbolic(U, g, eos, cfl);
+                       Real cfl, MPI_Comm comm, const Field3D* gfn,
+                       const MixtureEOS* mix) {
+    Real dt_local = max_dt_hyperbolic(U, g, eos, cfl, gfn, mix);
     Real dt_global = dt_local;
     MPI_Allreduce(&dt_local, &dt_global, 1, MPI_DOUBLE, MPI_MIN, comm);
     return dt_global;
@@ -518,6 +641,89 @@ void fill_viscous_flux_dir(const State& U, const CellGradients& G,
                 Fw(i, j, k) = Gv.f[RHOW];
                 FE(i, j, k) = Gv.f[RHOE];
             }
+}
+
+// Cell-centered artificial (LAD) flux for direction d, on [-1, n+1) -- exactly
+// the band the compact (2nd-order) divergence below needs for interior cells.
+void fill_artificial_flux_dir(const State& U, const CellGradients& G,
+                              const Field3D& mu_art, const Field3D& beta_art,
+                              const Field3D& kappa_art, const Field3D& d_art,
+                              int d, Real inv_dh, State& Flux) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    const int lo = -1;
+    const int hi_x = nx + 1;
+    const int hi_y = (ny > 1) ? ny + 1 : ny;
+    const int hi_z = (nz > 1) ? nz + 1 : nz;
+    const int jlo = (ny > 1) ? -1 : 0;
+    const int klo = (nz > 1) ? -1 : 0;
+
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+    Field3D& Fr = Flux[RHO]; Field3D& Fu = Flux[RHOU]; Field3D& Fv = Flux[RHOV];
+    Field3D& Fw = Flux[RHOW]; Field3D& FE = Flux[RHOE];
+    Fr.fill(0.0); Fu.fill(0.0); Fv.fill(0.0); Fw.fill(0.0); FE.fill(0.0);
+
+    const Index srho = (d == 0 ? 1 : (d == 1 ? rho.ldx() : rho.ldxy()));
+    const Real half_inv = 0.5 * inv_dh;
+    auto zsafe = [](Real x) { return std::isfinite(x) ? x : 0.0; };
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = klo; k < hi_z; ++k)
+        for (int j = jlo; j < hi_y; ++j)
+            for (int i = lo; i < hi_x; ++i) {
+                const Real r = rho(i, j, k);
+                CellState C{};
+                C.u = mx(i, j, k) / r;
+                C.v = my(i, j, k) / r;
+                C.w = mz(i, j, k) / r;
+                for (int a = 0; a < 3; ++a) {
+                    for (int b = 0; b < 3; ++b) C.dudx[a][b] = G.du[a][b](i, j, k);
+                    C.dTdx[a] = G.dT[a](i, j, k);
+                }
+                ViscousFluxVec Gv = artificial_flux(
+                    C, mu_art(i, j, k), beta_art(i, j, k), kappa_art(i, j, k), d);
+
+                // Consistent mass/contact diffusion: J = D_art * d(rho)/dx_d.
+                // Diffusing rho carries momentum at the local velocity and the
+                // local kinetic energy, so u and (internal energy hence) p are
+                // unchanged across a contact -- only rho is smoothed.
+                const Real* rp = &rho(i, j, k);
+                const Real drho = (zsafe(rp[srho]) - zsafe(rp[-srho])) * half_inv;
+                const Real J = d_art(i, j, k) * drho;
+                const Real ke = 0.5 * (C.u * C.u + C.v * C.v + C.w * C.w);
+
+                Fr(i, j, k) = Gv.f[RHO ] + J;
+                Fu(i, j, k) = Gv.f[RHOU] + J * C.u;
+                Fv(i, j, k) = Gv.f[RHOV] + J * C.v;
+                Fw(i, j, k) = Gv.f[RHOW] + J * C.w;
+                FE(i, j, k) = Gv.f[RHOE] + J * ke;
+            }
+}
+
+// Compact 2nd-order central divergence of an artificial flux (radius 1), so it
+// needs the flux only on [-1, n+1). The artificial diffusivity is a sub-grid
+// regularization, so a low-order divergence is appropriate and keeps the
+// 2nd-derivative LAD sensor within NGHOST=6.
+void add_compact_divergence(const State& Flux, int d, Real inv_dh, State& Rhs) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const Real half_inv = 0.5 * inv_dh;
+    // Includes RHO: the artificial mass/contact diffusion has a non-zero mass
+    // flux (the physical viscous flux does not).
+    for (int v = 0; v < NCONS; ++v) {
+        const Field3D& F = Flux[v];
+        Field3D&       R = Rhs[v];
+        const Index sd = (d == 0 ? 1 : (d == 1 ? F.ldx() : F.ldxy()));
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+#pragma omp simd
+                for (int i = 0; i < nx; ++i) {
+                    const Real* f = &F(i, j, k);
+                    R(i, j, k) += (f[sd] - f[-sd]) * half_inv;
+                }
+    }
 }
 
 void add_viscous_flux_divergence(const State& Flux, int d, Real inv_dh,
@@ -679,12 +885,16 @@ static void add_rhs_hyperdissipation6(const State& U, const Grid& g,
 
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
                      const ViscousParams& vp, RhsScratch& scratch, State& Rhs) {
-    if (vp.mu > 0.0) {
+    // Cell gradients feed both the physical viscous flux and the LAD sensor.
+    const bool need_grad = (vp.mu > 0.0) || vp.abv_enabled;
+    if (need_grad) {
         compute_cell_gradients(U, g, eos,
                                scratch.prim_u, scratch.prim_v,
                                scratch.prim_w, scratch.prim_T,
                                scratch.G);
+    }
 
+    if (vp.mu > 0.0) {
         State& Flux = scratch.Flux_visc;
 
         fill_viscous_flux_dir(U, scratch.G, vp, eos, 0, Flux);
@@ -699,6 +909,34 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
             add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
         }
     }
+
+    // Localized artificial diffusivity (LAD): compute the coefficient fields
+    // then add their compact-divergence flux. Shares the cell gradients above.
+    if (vp.abv_enabled) {
+        scratch.allocate_abv(U.nx(), U.ny(), U.nz(), U.ng());
+        scratch.abv_nu_max = compute_lad_fields(
+            U, g, eos, vp, scratch.G, scratch.prim_T,
+            scratch.lad_theta, scratch.lad_strain,
+            scratch.mu_art, scratch.beta_art, scratch.kappa_art, scratch.d_art);
+
+        State& Flux = scratch.Flux_visc;
+        const Real idx = 1.0 / g.dx(), idy = 1.0 / g.dy(), idz = 1.0 / g.dz();
+        fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
+                                 scratch.kappa_art, scratch.d_art, 0, idx, Flux);
+        add_compact_divergence(Flux, 0, idx, Rhs);
+        if (U.ny() > 1) {
+            fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
+                                     scratch.kappa_art, scratch.d_art, 1, idy, Flux);
+            add_compact_divergence(Flux, 1, idy, Rhs);
+        }
+        if (U.nz() > 1) {
+            fill_artificial_flux_dir(U, scratch.G, scratch.mu_art, scratch.beta_art,
+                                     scratch.kappa_art, scratch.d_art, 2, idz, Flux);
+            add_compact_divergence(Flux, 2, idz, Rhs);
+        }
+    }
+
+
     if (vp.hyper_method == HyperMethod::FiniteDifference) {
         add_rhs_hyperdissipation(U, g, vp.hyper_coeff, scratch.lap, Rhs);
         add_rhs_hyperdissipation6(U, g, vp.hyper6_coeff,

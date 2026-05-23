@@ -13,14 +13,25 @@ namespace blast {
 
 struct VelocityStats {
     Real u_mean[3];      // volume-averaged velocity
+    Real mom[3];         // < rho u_i >  (mean momentum density). Total momentum
+                         // = mom * volume is conserved exactly for periodic BCs
+                         // (no boundary force); for slip walls it tracks the net
+                         // wall pressure impulse (~0 by symmetry for a centered
+                         // blast), so its drift is a symmetry / impulse monitor.
     Real u_rms;          // sqrt( <(u_i - <u_i>)^2> )
-    Real ke_total;       // < (1/2) rho |u|^2 >
+    Real ke_total;       // < (1/2) rho |u|^2 >        (mean kinetic energy density)
     Real tke;            // < (1/2) rho |u'|^2 >  with mean removed (Reynolds)
     Real M_t;            // u_rms / <c>
     Real c_mean;         // < sound speed >
     Real T_mean;
     Real rho_mean;
     Real p_mean;
+    // Total energy conservation monitor. e_total = < rho E > is the mean total
+    // energy density; with a fixed domain volume it is conserved (constant in
+    // time) for a closed chamber with no forcing -- viscous / WENO / LAD
+    // dissipation only converts kinetic to internal, leaving e_total fixed.
+    Real e_total;        // < rho E >                  (kinetic + internal)
+    Real e_int;          // < rho e_int > = e_total - ke_total
 };
 
 VelocityStats velocity_stats(const State& U, const IdealGas& eos);

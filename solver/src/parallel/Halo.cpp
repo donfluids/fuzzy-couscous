@@ -87,20 +87,23 @@ void Halo::build_datatypes_(const Field3D& f) {
 }
 
 void Halo::exchange(State& U) {
-    // Post non-blocking sends and receives for all 5 conserved variables
-    // and all 3 dims. 20 messages total.
-    std::array<MPI_Request, NCONS * 12> reqs;
-    int n_reqs = 0;
-
-    for (int v = 0; v < NCONS; ++v) {
-        Field3D& F = U[v];
-        double* base = F.raw();
-        for (int d = 0; d < 3; ++d) {
-            const int nb_lo = domain_.neighbor(d, -1);
-            const int nb_hi = domain_.neighbor(d, +1);
+    // SEQUENTIAL dimensional sweep (x, then y, then z, with an MPI_Waitall
+    // between passes). This is what fills EDGE and CORNER ghost cells: the y-pass
+    // sends slabs that span the full x-extent INCLUDING the x-ghosts just filled
+    // by the x-pass, so corner ghosts propagate. A single batched pass over all
+    // dims leaves corners stale (fine for axis-aligned stencils like the
+    // hyperbolic flux, but wrong for the multifluid contact band / viscous
+    // cross-derivatives, which read corners). Axis-aligned ghosts are identical
+    // either way, so single-fluid bit-exactness is preserved.
+    for (int d = 0; d < 3; ++d) {
+        const int nb_lo = domain_.neighbor(d, -1);
+        const int nb_hi = domain_.neighbor(d, +1);
+        std::array<MPI_Request, NCONS * 4> reqs;
+        int n_reqs = 0;
+        for (int v = 0; v < NCONS; ++v) {
+            double* base = U[v].raw();
             const int tag_send_lo = 100 * v + 10 * d + 0;
             const int tag_send_hi = 100 * v + 10 * d + 1;
-
             if (nb_lo != MPI_PROC_NULL) {
                 MPI_Irecv(base + recv_lo_off_[d], 1, slab_type_[d],
                           nb_lo, tag_send_hi, domain_.comm(), &reqs[n_reqs++]);
@@ -114,9 +117,36 @@ void Halo::exchange(State& U) {
                           nb_hi, tag_send_hi, domain_.comm(), &reqs[n_reqs++]);
             }
         }
+        MPI_Waitall(n_reqs, reqs.data(), MPI_STATUSES_IGNORE);
     }
+}
 
-    MPI_Waitall(n_reqs, reqs.data(), MPI_STATUSES_IGNORE);
+void Halo::exchange(Field3D& f) {
+    // Single-scalar-field variant (multifluid G). Sequential per-dim sweep (same
+    // corner-filling rationale as exchange(State)), 6 messages total. Distinct
+    // tag base (900+) from the State exchange.
+    double* base = f.raw();
+    for (int d = 0; d < 3; ++d) {
+        const int nb_lo = domain_.neighbor(d, -1);
+        const int nb_hi = domain_.neighbor(d, +1);
+        std::array<MPI_Request, 4> reqs;
+        int n_reqs = 0;
+        const int tag_send_lo = 900 + 10 * d + 0;
+        const int tag_send_hi = 900 + 10 * d + 1;
+        if (nb_lo != MPI_PROC_NULL) {
+            MPI_Irecv(base + recv_lo_off_[d], 1, slab_type_[d],
+                      nb_lo, tag_send_hi, domain_.comm(), &reqs[n_reqs++]);
+            MPI_Isend(base + send_lo_off_[d], 1, slab_type_[d],
+                      nb_lo, tag_send_lo, domain_.comm(), &reqs[n_reqs++]);
+        }
+        if (nb_hi != MPI_PROC_NULL) {
+            MPI_Irecv(base + recv_hi_off_[d], 1, slab_type_[d],
+                      nb_hi, tag_send_lo, domain_.comm(), &reqs[n_reqs++]);
+            MPI_Isend(base + send_hi_off_[d], 1, slab_type_[d],
+                      nb_hi, tag_send_hi, domain_.comm(), &reqs[n_reqs++]);
+        }
+        MPI_Waitall(n_reqs, reqs.data(), MPI_STATUSES_IGNORE);
+    }
 }
 
 }  // namespace blast

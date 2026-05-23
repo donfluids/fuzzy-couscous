@@ -28,7 +28,11 @@ inline Real pressure_at(const State& U, const IdealGas& eos, int i, int j, int k
 }  // namespace
 
 void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
-                    Field3D& theta) {
+                    Field3D& theta, const Field3D* gfn, const MixtureEOS* mix) {
+    // JWL products pressure is not (gamma-1) e_int, so a JWL multifluid must use
+    // the local EOS for the pressure-jump / sound-speed terms. Two-gamma and
+    // single-fluid keep the reference-gamma path (bit-identical to before).
+    const bool use_mix = (mix && gfn && mix->mode == MixMode::JWL);
     const int nx = g.nx, ny = g.ny, nz = g.nz;
     const Real inv_2dx = 1.0 / (2.0 * g.dx());
     const Real inv_2dy = (ny > 1) ? 1.0 / (2.0 * g.dy()) : 0.0;
@@ -55,6 +59,18 @@ void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
         u = mx(i, j, k) / r;
         v = my(i, j, k) / r;
         w = mz(i, j, k) / r;
+    };
+
+    // Pressure at a cell, EOS-aware. Non-mix path is bit-identical to the
+    // free pressure_at() helper above.
+    auto p_at = [&](int i, int j, int k) -> Real {
+        if (!use_mix) return pressure_at(U, eos, i, j, k);
+        const Real r = rho(i, j, k);
+        const Real u = mx(i, j, k) / r, v = my(i, j, k) / r, w = mz(i, j, k) / r;
+        const Real ke = 0.5 * r * (u * u + v * v + w * w);
+        Real p, c;
+        mix->p_c((*gfn)(i, j, k), r, U[RHOE](i, j, k) - ke, p, c);
+        return p;
     };
 
 #pragma omp parallel for collapse(2) schedule(static)
@@ -93,8 +109,10 @@ void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
                 const Real oz = dv_dx - du_dy;
                 const Real om2 = ox * ox + oy * oy + oz * oz;
                 const Real div2 = div * div;
-                const Real pc_local = pressure_at(U, eos, i, j, k);
-                const Real c_local  = eos.sound_speed(rho(i, j, k), pc_local);
+                const Real pc_local = p_at(i, j, k);
+                const Real c_local  = use_mix
+                    ? mix->sound_speed((*gfn)(i, j, k), rho(i, j, k), pc_local)
+                    : eos.sound_speed(rho(i, j, k), pc_local);
                 const Real eps_floor = EPS_REL * (c_local / dx_min) * (c_local / dx_min);
                 const Real phi_v = div2 / (div2 + om2 + eps_floor);
 
@@ -102,7 +120,7 @@ void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
                 const Real pc = pc_local;
                 Real max_jump = 0.0;
                 auto consider = [&](int ii, int jj, int kk) {
-                    const Real pn = pressure_at(U, eos, ii, jj, kk);
+                    const Real pn = p_at(ii, jj, kk);
                     const Real j_ratio = std::fabs(pn - pc) / (pn + pc + 1e-30);
                     if (j_ratio > max_jump) max_jump = j_ratio;
                 };

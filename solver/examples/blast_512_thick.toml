@@ -1,0 +1,66 @@
+# 512^3 spherical blast, slip-wall chamber, nabla^6 FD hyperdissipation.
+# Thick (8-cell) diffused interface to suppress initial Gibbs ringing at the
+# blast surface. Nondimensional units (R=1, gamma=1.4, ambient rho=1, T=1;
+# blast T_B=100 -> c_B ~ 11.8). dx = 1/512 ~ 1.95e-3.
+#   tanh_thickness = 8*dx = 0.015625   (8 cells wide, vs ~1.5 cells at 128^3)
+#   hyper6_coeff   = 2.5e-14 * (dx512/dx128)^6 = 6.10e-18  (holds the Nyquist
+#                    damping rate fixed across resolution; kmax = pi*512 ~ 1608)
+run_name = "blast_512_thick"
+
+[grid]
+nx = 512
+ny = 512
+nz = 512
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "slip_wall"
+xhi = "slip_wall"
+ylo = "slip_wall"
+yhi = "slip_wall"
+zlo = "slip_wall"
+zhi = "slip_wall"
+
+[ic]
+type           = "smooth_sphere"
+r0             = 0.1
+rho_B          = 10.0
+T_B            = 100.0
+rho_0          = 1.0
+T_0            = 1.0
+Y42_amp        = 0.2
+tanh_thickness = 0.015625      # 8 cells at 512^3
+
+[physics]
+gamma        = 1.4
+R            = 1.0
+mu           = 5.0e-4
+prandtl      = 0.71
+bulk_visc    = 0.0
+hyper_coeff  = 0.0
+hyper6_coeff = 6.10e-18
+
+[time]
+cfl_hyperbolic = 0.3
+cfl_viscous    = 0.25
+t_end          = 0.1
+dt_max         = 1.0
+max_steps      = 200000
+
+[filter]
+enabled = false
+
+[output]
+out_dir          = "runs/out_blast_512_thick"
+# Physical-time cadences (robust to varying dt). t_end = 0.1.
+stats_dt         = 0.0005     # statistics every 0.0005  (~200 rows)
+spectra_dt       = 0.0005     # spectra (Helmholtz + shell) every 0.0005
+checkpoint_dt    = 0.001      # rolling restart file every 0.001 (~100 updates)
+snapshot_every   = 1000       # full-field viz dumps (step-based; ~6 over the run)
+write_spectra    = true
+write_helmholtz  = true

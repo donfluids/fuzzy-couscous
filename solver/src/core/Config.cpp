@@ -32,6 +32,7 @@ ICType parse_ic(std::string_view s) {
     if (s == "tophat_sphere")  return ICType::TopHatSphere;
     if (s == "smooth_sphere")  return ICType::SmoothSphere;
     if (s == "cj_detonation")  return ICType::CJDetonation;
+    if (s == "gaussian_blast") return ICType::GaussianBlast;
     throw std::invalid_argument("Unknown IC: " + std::string(s));
 }
 
@@ -77,6 +78,7 @@ Config load_config(const std::string& path) {
     if (auto s = ic["type"].value<std::string>()) c.ic.type = parse_ic(*s);
     c.ic.r0      = pick<double>(ic["r0"],      c.ic.r0);
     c.ic.rho_B   = pick<double>(ic["rho_B"],   c.ic.rho_B);
+    c.ic.blast_energy = pick<double>(ic["blast_energy"], c.ic.blast_energy);
     c.ic.T_B     = pick<double>(ic["T_B"],     c.ic.T_B);
     c.ic.rho_0   = pick<double>(ic["rho_0"],   c.ic.rho_0);
     c.ic.T_0     = pick<double>(ic["T_0"],     c.ic.T_0);
@@ -99,6 +101,17 @@ Config load_config(const std::string& path) {
     c.physics.hyper6_coeff = pick<double>(ph["hyper6_coeff"], c.physics.hyper6_coeff);
     if (auto s = ph["hyper_method"].value<std::string>())
         c.physics.hyper_method = parse_hyper_method(*s);
+    if (auto s = ph["flux_scheme"].value<std::string>()) {
+        if (*s == "compact10")     c.physics.flux_compact10 = true;
+        else if (*s == "central6") c.physics.flux_compact10 = false;
+        else throw std::runtime_error(
+            "flux_scheme must be \"central6\" or \"compact10\"");
+    }
+    if (c.physics.flux_compact10 && c.bc.all_periodic()) {
+        throw std::runtime_error(
+            "flux_scheme = \"compact10\" uses a slip-wall boundary closure and "
+            "is not supported for all-periodic BCs yet");
+    }
 
     if (c.physics.hyper_method == HyperMethod::Pseudospectral
         && !c.bc.all_periodic() && !c.bc.all_slip_wall()) {
@@ -114,6 +127,8 @@ Config load_config(const std::string& path) {
     c.afp.C_mu    = pick<double>(a["C_mu"], c.afp.C_mu);
     c.afp.C_beta  = pick<double>(a["C_beta"], c.afp.C_beta);
     c.afp.C_kappa = pick<double>(a["C_kappa"], c.afp.C_kappa);
+    c.afp.C_D     = pick<double>(a["C_D"], c.afp.C_D);
+    c.afp.disable_weno = pick<bool>(a["disable_weno"], c.afp.disable_weno);
 
     auto t = tbl["time"];
     c.time.cfl_hyperbolic = pick<double>(t["cfl_hyperbolic"], c.time.cfl_hyperbolic);
@@ -147,6 +162,8 @@ Config load_config(const std::string& path) {
 
     auto mf = tbl["multifluid"];
     c.multifluid.enabled = pick<bool>(mf["enabled"],   c.multifluid.enabled);
+    c.multifluid.conservative = pick<bool>(mf["conservative"], c.multifluid.conservative);
+    c.multifluid.eos     = pick<std::string>(mf["eos"], c.multifluid.eos);
     c.multifluid.gamma_p = pick<double>(mf["gamma_p"], c.multifluid.gamma_p);
     c.multifluid.rho_p   = pick<double>(mf["rho_p"],   c.multifluid.rho_p);
     c.multifluid.T_p     = pick<double>(mf["T_p"],     c.multifluid.T_p);
@@ -156,12 +173,31 @@ Config load_config(const std::string& path) {
     c.multifluid.rho_e   = pick<double>(mf["rho_e"],   c.multifluid.rho_e);
     c.multifluid.T_e     = pick<double>(mf["T_e"],     c.multifluid.T_e);
     c.multifluid.cj_u_frac = pick<double>(mf["cj_u_frac"], c.multifluid.cj_u_frac);
+    // JWL products EOS (eos = "jwl").
+    c.multifluid.jwl_A     = pick<double>(mf["jwl_A"],     c.multifluid.jwl_A);
+    c.multifluid.jwl_B     = pick<double>(mf["jwl_B"],     c.multifluid.jwl_B);
+    c.multifluid.jwl_R1    = pick<double>(mf["jwl_R1"],    c.multifluid.jwl_R1);
+    c.multifluid.jwl_R2    = pick<double>(mf["jwl_R2"],    c.multifluid.jwl_R2);
+    c.multifluid.jwl_omega = pick<double>(mf["jwl_omega"], c.multifluid.jwl_omega);
+    c.multifluid.jwl_rho0  = pick<double>(mf["jwl_rho0"],  c.multifluid.jwl_rho0);
+    c.multifluid.jwl_E0    = pick<double>(mf["jwl_E0"],    c.multifluid.jwl_E0);
+    c.multifluid.rho_cj    = pick<double>(mf["rho_cj"],    c.multifluid.rho_cj);
+    c.multifluid.p_cj      = pick<double>(mf["p_cj"],      c.multifluid.p_cj);
+    c.multifluid.p_a_jwl   = pick<double>(mf["p_a"],       c.multifluid.p_a_jwl);
+    c.multifluid.phi_switch = pick<double>(mf["phi_switch"], c.multifluid.phi_switch);
+    c.multifluid.rho_ref   = pick<double>(mf["rho_ref"],   c.multifluid.rho_ref);
+    c.multifluid.p_ref     = pick<double>(mf["p_ref"],     c.multifluid.p_ref);
 
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
     c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);
+    c.output.snapshot_dt      = pick<double>(o["snapshot_dt"],     c.output.snapshot_dt);
     c.output.stats_every      = pick<int64_t>(o["stats_every"],    c.output.stats_every);
+    c.output.stats_dt         = pick<double>(o["stats_dt"],        c.output.stats_dt);
+    c.output.spectra_dt       = pick<double>(o["spectra_dt"],      c.output.spectra_dt);
+    c.output.spectra_every    = pick<int64_t>(o["spectra_every"],  c.output.spectra_every);
     c.output.checkpoint_every = pick<int64_t>(o["checkpoint_every"], c.output.checkpoint_every);
+    c.output.checkpoint_dt    = pick<double>(o["checkpoint_dt"],   c.output.checkpoint_dt);
     c.output.write_spectra    = pick<bool>(o["write_spectra"],   c.output.write_spectra);
     c.output.write_helmholtz  = pick<bool>(o["write_helmholtz"], c.output.write_helmholtz);
     c.output.restart_path     = pick<std::string>(o["restart_path"], c.output.restart_path);

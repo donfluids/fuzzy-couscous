@@ -5,6 +5,7 @@
 #include "core/State.hpp"
 #include "numerics/RhsScratch.hpp"
 #include "physics/EOS.hpp"
+#include "physics/MixtureEOS.hpp"
 #include "physics/ViscousFlux.hpp"
 
 #ifdef BLAST_MPI
@@ -27,15 +28,23 @@ class RK3 {
 public:
     RK3(int nx, int ny, int nz, int ng);
 
+    // Max effective LAD (artificial diffusivity) kinematic diffusivity seen on
+    // the most recent step, for the viscous CFL constraint (one-step lag).
+    // Zero until the first artificial-diffusivity RHS evaluation.
+    Real last_abv_nu_max() const { return scratch_.abv_nu_max; }
+
     // Inviscid step. Equivalent to step(U, g, bc, eos, {mu=0}, dt).
     void step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
               Real dt);
 
     // Full Navier-Stokes step: inviscid + viscous if vp.mu > 0.
-    // gfn (optional): per-cell G=1/(gamma-1) for a two-gamma multifluid (held
-    // fixed across the 3 stages; advected separately by the caller).
+    // gfn (optional): per-cell multifluid marker (held fixed across the 3
+    // stages; advected separately by the caller).
+    // mix (optional): marker-selected mixture EOS (two-gamma or air+JWL);
+    // nullptr keeps the original gloc = 1 + 1/G arithmetic.
     void step(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
-              const ViscousParams& vp, Real dt, const Field3D* gfn = nullptr);
+              const ViscousParams& vp, Real dt, const Field3D* gfn = nullptr,
+              const MixtureEOS* mix = nullptr);
 
     // Navier-Stokes step with a user-supplied source-term callback (for
     // MMS verification). `t_current` is the time at the start of the step.
@@ -46,9 +55,12 @@ public:
 #ifdef BLAST_MPI
     // MPI variant: halo-exchange before applying physical BCs at each stage.
     // The Halo object must outlive this RK3.
+    // gfn (optional): two-gamma multifluid G field, held fixed across the 3
+    // stages (its ghosts must be valid on entry; advected separately by caller).
     void step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos,
                   const ViscousParams& vp, Real dt,
-                  const Domain& d, Halo& halo);
+                  const Domain& d, Halo& halo, const Field3D* gfn = nullptr,
+                  const MixtureEOS* mix = nullptr);
 
     // Build the MPI pseudospectral hyperdissipation operator with the
     // global grid, Cartesian domain, and BC-driven basis mode. Call once

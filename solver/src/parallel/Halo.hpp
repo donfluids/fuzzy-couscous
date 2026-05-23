@@ -35,6 +35,11 @@ public:
     // on faces that don't have an MPI neighbor (use Domain::is_physical_face).
     void exchange(State& U);
 
+    // Exchange ghost cells of a single scalar field (e.g. the multifluid G
+    // field). `f` must share the State's shape (nx, ny, nz, ng) used to build
+    // this Halo so the cached subarray datatypes and offsets apply. 6 messages.
+    void exchange(Field3D& f);
+
 private:
     void build_datatypes_(const Field3D& f);
 

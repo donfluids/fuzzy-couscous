@@ -312,6 +312,44 @@ void ic_sphere_blast_3d(State& U, const Grid& g, const IdealGas& eos,
             }
 }
 
+void ic_gaussian_blast_3d(State& U, const Grid& g, const IdealGas& eos,
+                          Real E_total, Real sigma,
+                          Real rho_ambient, Real T_ambient, Real Y42_amp,
+                          Real ensemble_amp, int ensemble_seed,
+                          Real x_center, Real y_center, Real z_center) {
+    const Real xc = std::isnan(x_center) ? g.x0 + 0.5 * g.lx : x_center;
+    const Real yc = std::isnan(y_center) ? g.y0 + 0.5 * g.ly : y_center;
+    const Real zc = std::isnan(z_center) ? g.z0 + 0.5 * g.lz : z_center;
+    const Real gm1 = eos.eos.gamma - 1.0;
+    const Real p_ambient   = rho_ambient * eos.eos.R * T_ambient;
+    const Real rhoe_ambient = p_ambient / gm1;
+    const Real s2 = std::max(sigma * sigma, 1e-30);
+    // Peak internal-energy density so the deposited energy integrates to E_total
+    // (continuum normalization; exact for sigma << box, tail truncation
+    // negligible).
+    const Real A = E_total / std::pow(2.0 * M_PI * s2, 1.5);
+
+    AngularPerturbation pert;
+    pert.seed(ensemble_seed, ensemble_amp);
+
+    for (int k = 0; k < g.nz; ++k)
+        for (int j = 0; j < g.ny; ++j)
+            for (int i = 0; i < g.nx; ++i) {
+                const Real x = g.xc(i) - xc;
+                const Real y = g.yc(j) - yc;
+                const Real z = g.zc(k) - zc;
+                const Real r2 = x*x + y*y + z*z;
+                // Angular modulation seeds the turbulence; clamp >= 0 so the
+                // deposited energy density stays positive.
+                const Real ang = std::max(0.0, 1.0
+                                          + Y42_amp * y42_unit(x, y, z)
+                                          + pert.eval(x, y, z));
+                const Real bump = A * std::exp(-0.5 * r2 / s2) * ang;
+                const Real p = gm1 * (rhoe_ambient + bump);
+                set_from_primitive(U, i, j, k, eos, rho_ambient, 0.0, 0.0, 0.0, p);
+            }
+}
+
 void ic_cj_detonation_3d(State& U, const Grid& g, const IdealGas& eos,
                          Real rho_0, Real T_0, Real q_specific,
                          Real r_cj, Real tanh_thickness, Real Y42_amp,

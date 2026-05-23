@@ -107,8 +107,10 @@ set(BLAST_CORE_SOURCES
     src/io/Log.cpp
     src/bc/BC.cpp
     src/numerics/RHS.cpp
+    src/numerics/CompactScheme.cpp
     src/numerics/RhsScratch.cpp
     src/numerics/HyperdissipationSpectral.cpp
+    src/numerics/ArtificialDiffusivity.cpp
     src/numerics/RK3.cpp
     src/numerics/Ducros.cpp
     src/numerics/Filter.cpp

@@ -20,6 +20,11 @@ void apply_bcs(State& U, const BCSet& bc);
 // owns physically (Domain::is_physical_face). Internal partition faces are
 // expected to be filled by Halo::exchange prior to this call.
 void apply_bcs(State& U, const BCSet& bc, const Domain& d);
+
+// Scalar-field MPI BC fill (e.g. the multifluid G field). Mirrors the State
+// variant but for a single Field3D with no wall sign-flip (G is a scalar, even
+// at slip walls -> zero-gradient). Internal faces filled by Halo::exchange.
+void apply_bcs(Field3D& f, const BCSet& bc, const Domain& d);
 #endif
 
 }  // namespace blast

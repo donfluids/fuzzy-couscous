@@ -9,6 +9,7 @@
 namespace blast {
 
 class HyperdissipationSpectralBase;
+class CompactPenta;
 
 // Per-step scratch buffers used by the RHS pipeline. The previous
 // implementation allocated ~30 Field3D objects on EACH RHS call (3 per
@@ -35,6 +36,32 @@ struct RhsScratch {
     CellGradients G;
     State   Flux_visc;
 
+    // Localized artificial diffusivity (LAD). Allocated lazily on first use
+    // (only when ViscousParams::abv_enabled), so default runs pay nothing.
+    Field3D lad_theta;          // div u source (filled on [-3, n+3))
+    Field3D lad_strain;         // |S| source   (filled on [-3, n+3))
+    Field3D mu_art, beta_art, kappa_art;   // LAD coefficients on [-1, n+1)
+    Field3D d_art;              // artificial mass/contact diffusivity on [-1, n+1)
+    bool    abv_allocated = false;
+    Real    abv_nu_max    = 0.0;   // max effective LAD diffusivity (for CFL)
+
+    // When true, the Ducros/WENO sensor is zeroed so the central scheme runs
+    // everywhere (LAD-only shock treatment). Set per step by the RK3 driver.
+    bool    disable_weno  = false;
+
+    // When true, the smooth-region inviscid flux uses the 10th-order conservative
+    // compact reconstruction instead of explicit central6 (shock faces still go
+    // to WENO5). Set per step by the RK3 driver from config. The per-direction
+    // pentadiagonal solvers are built lazily on first use (cached by line length).
+    bool    use_compact   = false;
+    std::unique_ptr<CompactPenta> compact_x, compact_y, compact_z;
+
+    // Multifluid: when true, use the conservative telescoping flux-difference
+    // (local-gamma flux + WENO at contacts) instead of the energy-non-conservative
+    // gated double-flux. Conserves total energy at the cost of (WENO-limited)
+    // pressure oscillations across strong contacts. Set per step by RK3.
+    bool    mf_conservative = false;
+
     // Hyperdissipation. `lap` holds the first composed Laplacian; `lap2`
     // is the second intermediate for the nabla^6 path and is unused when
     // hyper6_coeff == 0.
@@ -49,6 +76,10 @@ struct RhsScratch {
     // Allocate every buffer for a grid of given local extent + ghost count.
     // Call once per RK3 driver lifetime.
     void allocate(int nx, int ny, int nz, int ng);
+
+    // Lazily allocate the LAD buffers (idempotent). Called from add_rhs_viscous
+    // the first time artificial diffusivity is requested.
+    void allocate_abv(int nx, int ny, int nz, int ng);
 
     // Out-of-line dtor so the unique_ptr<HyperdissipationSpectral> can be
     // declared with a forward-declared payload.

@@ -126,7 +126,7 @@ def main() -> int:
 
     # Right panel: integrated quantities vs time.
     if stats_path.exists():
-        s = pd.read_csv(stats_path)
+        s = pd.read_csv(stats_path, skipinitialspace=True)
         ax = axes[2]
         ax.plot(s["time"], s["tke"], label="tke", color="C0")
         ax.set_xlabel("time")

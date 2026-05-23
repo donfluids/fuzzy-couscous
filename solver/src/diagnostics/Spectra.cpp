@@ -944,10 +944,11 @@ ShellSpectrum velocity_spectrum_dct_mpi(const State& U, const Grid& global_g,
     const Real k_fund_z = M_PI / global_g.lz;
     const Real k_fund   = std::min({k_fund_x, k_fund_y, k_fund_z});
 
-    // Highest index along any axis is N - 1; bin index is round(|k|/k_fund),
-    // so kmax_bin ~ sqrt(3) * (N-1) in axis units. Use the conservative bound.
-    const int kmax = static_cast<int>(std::ceil(
-        std::sqrt(3.0) * std::max({nx_g, ny_g, nz_g})));
+    // Per-axis Nyquist truncation: the DCT fundamental is pi/L, so the highest
+    // resolved per-axis mode sits at shell index N (k = pi*N/L = Nyquist). Shells
+    // out to sqrt(3)*N are cube-corner-only -- partially populated, non-isotropic,
+    // and carry ~1e-10 of the energy -- so cap at N rather than at the corner.
+    const int kmax = std::max({nx_g, ny_g, nz_g});
 
     std::vector<Real> bin_sum_local(kmax + 1, 0.0);
     std::vector<double> local_buf;
@@ -1058,8 +1059,9 @@ HelmholtzResult helmholtz_decompose_dct_mpi(const State& U, const Grid& global_g
     const Real pi_Ly = M_PI / global_g.ly;
     const Real pi_Lz = M_PI / global_g.lz;
     const Real k_fund = std::min({pi_Lx, pi_Ly, pi_Lz});
-    const int  kmax = static_cast<int>(std::ceil(
-        std::sqrt(3.0) * std::max({nx_g, ny_g, nz_g})));
+    // Per-axis Nyquist truncation (DCT fundamental pi/L): cap at shell index N,
+    // not the sqrt(3)*N cube corner (corner shells are non-isotropic, ~1e-10 E).
+    const int  kmax = std::max({nx_g, ny_g, nz_g});
 
     // 1. Forward transforms. After this, plan_*.real_buf() holds the spectral
     // coefficients of u, v, w in their respective bases.

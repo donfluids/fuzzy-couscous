@@ -104,6 +104,32 @@ $PY tools/ensemble_average.py out_a/*_stats.csv out_b/*_stats.csv \
 | LES sink | `ν_h ∇⁴ U` hyperdissipation on every conserved variable (`physics.hyper_coeff` knob) |
 | Time integration | SSP-RK3 (Gottlieb–Shu) with optional source-term callback for MMS |
 | Boundary conditions | Periodic, slip-wall (adiabatic), characteristic outflow |
+| Equation of state | Ideal gas; or a marker-selected mixture (ideal air + dense products) for blasts: two-gamma, or **JWL** for real high explosives (TNT) |
+
+### Equation of state and multifluid (`[multifluid]`)
+
+A blast can carry an advected per-cell marker selecting the products EOS against
+ambient ideal air. Two modes (`eos = "two_gamma" | "jwl"`):
+
+- **two-gamma** — marker is `G = 1/(γ−1)`; products are a second ideal gas
+  (`gamma_p`). The original variable-density contact model.
+- **jwl** — marker is a products mass fraction `φ ∈ [0,1]`; products follow the
+  Jones–Wilkins–Lee EOS `p = A(1−ω/R₁V)e^{−R₁V} + B(1−ω/R₂V)e^{−R₂V} + ω·e`
+  (`V = ρ₀/ρ`), which real high explosives obey and an ideal gas cannot. Ships
+  with the LLNL/Dobratz **TNT** set (`examples/tnt_freeair.toml`), run
+  nondimensionally (`rho_ref = ρ₀`, `p_ref = p_CJ`) so the ~1000:1 density /
+  10⁵:1 pressure contrast (Atwood ≈ 0.999) stays well conditioned; the products
+  bubble starts at the tabulated CJ state.
+
+Both modes share one dispatcher (`physics/MixtureEOS.hpp`) that maps
+`(marker, ρ, e_int) → (p, c)` at the flux/CFL sites; the EOS-agnostic Euler flux
+(`euler_flux(U, p, d)`) is reused unchanged. The contact uses a gated double-flux
+(non-oscillatory) or an opt-in conservative flux (`conservative = true`). JWL is
+validated by 1-D EOS self-consistency (CJ sound speed `c_CJ = D − u_CJ`), a
+serial/MPI bit-exact regression, and a free-air blast whose peak-overpressure
+envelope decays between the near-field `Z⁻³` and far-field `Z⁻¹` slopes
+(`scripts/blast_overpressure.py`). Afterburning (reactive heat release) is a
+deferred follow-on.
 
 ## Diagnostics (the paper-revision deliverable)
 
@@ -116,6 +142,49 @@ appends shell-averaged E(k), Helmholtz-split E_sol(k) / E_dil(k) per step:
   `ε_sol = ν ⟨|ω|²⟩`, `ε_dil = (4/3) ν ⟨(∇·u)²⟩`
 - enstrophy `⟨|ω|²⟩` and dilatation-squared `⟨(∇·u)²⟩` independently
 - Helmholtz solenoidal/dilatational kinetic-energy split + per-shell spectra
+- conservation monitors: total energy `e_total = ⟨ρE⟩` and its ratio
+  `E_ratio = E/E0` (drift `dE/E0 = E_ratio − 1`); total mass via `rho_mean`
+  and `M_ratio = M/M0` (drift `dM/M0`); total momentum `mom_x/y/z = ⟨ρu_i⟩`
+  reported as `|p|/(ρc)`. `e_int` is accumulated directly from the field
+  (`Σ(ρE − ½ρ|u|²)`), not by subtraction, so `KE + e_int = e_total` is a real
+  consistency check rather than an identity.
+
+### What the conservation monitors do and do not measure
+
+For a closed chamber (slip walls, no forcing) `E_ratio` and `M_ratio` sit at
+`1.0` to round-off (`~1e-15`), and `dE/E0`, `dM/M0` stay at the ULP floor. This
+is **not** a statement about the scheme's accuracy — it is a discrete
+*conservation* identity, which is a different axis from *truncation error*:
+
+- Every flux term is built as a difference of face fluxes, `R_i -= (F_{i+½} −
+  F_{i−½})/Δx` (`numerics/RHS.cpp`). The face value `F_{i+½}` is computed from
+  identical inputs whether viewed from cell `i` or cell `i+1`, so it cancels
+  **bit-for-bit** when the update is summed over the domain (the discrete
+  divergence theorem). Only the two boundary faces survive, and at a slip wall
+  `u·n = 0` zeroes the mass flux `ρu·n` and energy flux `(ρE+p)u·n`. So the
+  totals are conserved by construction, **independent of the order** of the
+  reconstruction (2nd / 6th-central / WENO5).
+- The 6th-order truncation error (`O(Δx⁶)`, e.g. `~1e-12` at `Δx = 0.01`) lives
+  in the *solution* — pointwise `ρ`, the velocity field, shock position, the
+  spectrum — not in the totals. Because that error is itself a flux divergence,
+  it misplaces mass/energy *between* cells at `O(Δx⁶)` but sums to zero over the
+  domain. To see it, use the MMS convergence tests (`test_mms`,
+  `test_viscous_mms`), which measure the L2 solution error and its 6th-order
+  decay; the conservation monitor is a different instrument and order does not
+  enter it.
+- Momentum is the diagnostic contrast: at a slip wall the wall flux carries the
+  pressure term `p·n`, which the telescope does **not** cancel, so total
+  momentum is conserved only when wall-pressure impulses cancel by symmetry
+  (`|p|/ρc ~ 1e-17` for a centered blast). An off-center blast leaves `E_ratio`
+  and `M_ratio` pinned at 1 while `|p|/ρc` climbs — same code, different
+  mechanism.
+
+So the monitors are useful, but as a **structural / regression check**, not an
+accuracy metric: machine-precision drift is positive evidence that the scheme is
+genuinely in conservative flux form and the slip-wall BC is flux-consistent.
+Drift rising above the round-off floor flags a real defect — a non-conservative
+source term, a broken operator-split (BHR / multifluid), boundary leakage, or
+incipient instability — which is exactly what you want a monitor to catch.
 
 The Helmholtz split exposes two **distinct** dilatational quantities that must
 not be conflated:

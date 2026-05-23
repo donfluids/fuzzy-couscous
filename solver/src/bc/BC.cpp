@@ -116,6 +116,17 @@ void apply_bcs(State& U, const BCSet& bc, const Domain& d) {
     if (d.is_physical_face(2, -1)) apply_face_all_vars(U, 2, -1, bc.zlo);
     if (d.is_physical_face(2, +1)) apply_face_all_vars(U, 2, +1, bc.zhi);
 }
+
+void apply_bcs(Field3D& f, const BCSet& bc, const Domain& d) {
+    // Scalar (no sign flip). SlipWall -> even mirror = zero-gradient, matching
+    // the multifluid fill_G_bcs convention; Periodic wraps; Outflow extrapolates.
+    if (d.is_physical_face(0, -1)) apply_face(f, 0, -1, bc.xlo, /*sign_flip=*/false);
+    if (d.is_physical_face(0, +1)) apply_face(f, 0, +1, bc.xhi, false);
+    if (d.is_physical_face(1, -1)) apply_face(f, 1, -1, bc.ylo, false);
+    if (d.is_physical_face(1, +1)) apply_face(f, 1, +1, bc.yhi, false);
+    if (d.is_physical_face(2, -1)) apply_face(f, 2, -1, bc.zlo, false);
+    if (d.is_physical_face(2, +1)) apply_face(f, 2, +1, bc.zhi, false);
+}
 #endif
 
 }  // namespace blast

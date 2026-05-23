@@ -12,7 +12,7 @@ enum class BCType { Periodic, SlipWall, Outflow };
 
 enum class ICType {
     SodX, ShuOsherX, Sedov, TaylorGreen, CBC,
-    TopHatSphere, SmoothSphere, CJDetonation
+    TopHatSphere, SmoothSphere, CJDetonation, GaussianBlast
 };
 
 struct PhysicsConfig {
@@ -30,14 +30,27 @@ struct PhysicsConfig {
     // composed Laplacian stencils; "spectral" uses an exact FFT operator
     // and requires all-periodic BCs (validated at config load) and serial.
     HyperMethod hyper_method = HyperMethod::FiniteDifference;
+    // Inviscid flux reconstruction in smooth regions: false -> explicit
+    // 6th-order central (default); true -> 10th-order conservative compact
+    // (Lele pentadiagonal). Shock faces always go to WENO5. The compact path
+    // uses a slip-wall boundary closure, so it is currently restricted to
+    // non-(all-periodic) BCs (validated at config load).
+    bool flux_compact10 = false;
 };
 
+// Localized artificial diffusivity ("artificial fluid properties", Kawai-Lele).
+// Opt-in shock/contact dissipation that lets the central scheme run without
+// WENO. Off by default so existing runs are unchanged. NOTE: the finite-
+// difference path uses a 2nd-derivative sensor (r=2) to fit NGHOST=6; r_order
+// is reserved for a future wider-halo 4th-derivative variant.
 struct AFPConfig {
-    bool enabled  = true;
-    int  r_order  = 4;
-    Real C_mu     = 0.002;
-    Real C_beta   = 1.0;
-    Real C_kappa  = 0.01;
+    bool enabled      = false;
+    int  r_order      = 4;
+    Real C_mu         = 0.002;   // artificial shear
+    Real C_beta       = 1.0;     // artificial bulk (shocks)
+    Real C_kappa      = 0.01;    // artificial thermal conductivity (entropy/contacts)
+    Real C_D          = 0.01;    // artificial mass diffusivity (density contacts)
+    bool disable_weno = false;   // suppress Ducros/WENO so LAD is the sole shock sink
 };
 
 struct TimeConfig {
@@ -82,6 +95,9 @@ struct ICParams {
     Real r0       = 0.0;
     Real rho_B    = 1.0;
     Real T_B      = 1.0;
+    // Gaussian blast: total deposited energy E_B; the Gaussian width sigma
+    // reuses r0. blast_energy <= 0 is invalid for type "gaussian_blast".
+    Real blast_energy = 0.0;
     Real rho_0    = 1.0;
     Real T_0      = 1.0;
     Real Y42_amp  = 0.0;
@@ -114,6 +130,15 @@ struct ForcingConfig {
 
 struct MultifluidConfig {
     bool enabled   = false;    // two-gamma multifluid (dense products vs air)
+    // Use the conservative telescoping flux (local-gamma + WENO at contacts)
+    // instead of the energy-non-conservative gated double-flux. Trades small
+    // contact pressure oscillations for total-energy conservation.
+    bool conservative = false;
+    // EOS mode for the products: "two_gamma" (ideal gas, gamma_p) or "jwl"
+    // (Jones-Wilkins-Lee, for real high explosives like TNT). Air is always
+    // ideal (physics.eos.gamma). The advected marker is G=1/(gamma-1) for
+    // two_gamma, or a products mass fraction phi in [0,1] for jwl.
+    std::string eos = "two_gamma";
     Real gamma_p   = 1.25;     // products gamma (larger cv); air uses physics.eos.gamma
     Real rho_p     = 10.0;
     Real T_p       = 100.0;
@@ -124,6 +149,21 @@ struct MultifluidConfig {
     Real rho_e     = 0.0;      // unreacted explosive density (0 -> use rho_p)
     Real T_e       = 1.0;      // unreacted explosive temperature
     Real cj_u_frac = 0.0;      // fraction of CJ particle velocity imposed at t=0
+
+    // ---- JWL (eos = "jwl") -------------------------------------------------
+    // Standard JWL coefficients (SI by default; divided by p_ref/rho_ref at
+    // load so the solver sees nondimensional O(1) products). Products IC is the
+    // tabulated CJ state (rho_cj, p_cj); ambient air is (rho_a, p_a_jwl).
+    Real jwl_A = 0.0, jwl_B = 0.0;       // reference-curve coefficients [pressure]
+    Real jwl_R1 = 0.0, jwl_R2 = 0.0;     // reference-curve exponents [-]
+    Real jwl_omega = 0.0;                // Grueneisen coefficient [-]
+    Real jwl_rho0 = 1.0;                 // solid/reference density
+    Real jwl_E0 = 0.0;                   // detonation energy per volume [pressure]
+    Real rho_cj = 0.0, p_cj = 0.0;       // products CJ state for the IC
+    Real p_a_jwl = 0.0;                  // ambient air pressure for the IC
+    Real phi_switch = 0.5;               // products if phi >= phi_switch
+    // Nondimensional reference scales (1.0 -> params already nondimensional).
+    Real rho_ref = 1.0, p_ref = 1.0;
 };
 
 struct TurbulenceConfig {
@@ -136,9 +176,19 @@ struct TurbulenceConfig {
 
 struct OutputConfig {
     std::string out_dir         = "out";
+    // Output cadences. Each kind supports a physical-TIME interval (*_dt) and a
+    // STEP interval (*_every). Precedence per kind: if *_dt > 0, fire whenever the
+    // sim time crosses a multiple of it (time-uniform, robust to varying dt);
+    // else if *_every > 0, fire every *_every steps; else (for spectra) fall back
+    // to the stats cadence. Time intervals are the natural choice for analysis.
     int         snapshot_every  = 100;
+    Real        snapshot_dt     = 0.0;
     int         stats_every     = 10;
-    int         checkpoint_every = 0;   // 0 disables
+    Real        stats_dt        = 0.0;
+    int         spectra_every   = 0;
+    Real        spectra_dt      = 0.0;   // Helmholtz split + shell spectrum
+    int         checkpoint_every = 0;    // 0 disables (step-based)
+    Real        checkpoint_dt   = 0.0;   // restart-file (rolling overwrite) cadence
     bool        write_spectra   = true;
     bool        write_helmholtz = true;
     std::string restart_path    = "";   // empty -> cold start

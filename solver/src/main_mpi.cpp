@@ -16,6 +16,7 @@
 #include "parallel/Halo.hpp"
 #include "physics/EOS.hpp"
 #include "physics/Forcing.hpp"
+#include "physics/Multifluid.hpp"
 
 #include <mpi.h>
 
@@ -24,6 +25,7 @@
 #include <memory>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 
@@ -60,6 +62,12 @@ void apply_ic_local(State& U, const Grid& local_g, const Grid& global_g,
                                 (c.ic.tanh_thickness > 0 ? c.ic.tanh_thickness
                                                           : 1.5 * local_g.dx()),
                                 c.ic.Y42_amp, xc_g, yc_g, zc_g);
+            break;
+        case ICType::GaussianBlast:
+            ic_gaussian_blast_3d(U, local_g, eos, c.ic.blast_energy, c.ic.r0,
+                                 c.ic.rho_0, c.ic.T_0, c.ic.Y42_amp,
+                                 c.ic.ensemble_amp, c.ic.ensemble_seed,
+                                 xc_g, yc_g, zc_g);
             break;
         case ICType::SodX:
         case ICType::ShuOsherX:
@@ -139,6 +147,21 @@ int main(int argc, char** argv) {
 
     IdealGas eos{c.physics.eos};
     ViscousParams vp = to_viscous(c.physics, c.bc);
+    // Localized artificial diffusivity (LAD), configured via the [afp] block.
+    vp.abv_enabled      = c.afp.enabled;
+    vp.abv_r            = c.afp.r_order;
+    vp.abv_cbeta        = c.afp.C_beta;
+    vp.abv_cmu          = c.afp.C_mu;
+    vp.abv_ckappa       = c.afp.C_kappa;
+    vp.abv_cD           = c.afp.C_D;
+    vp.abv_disable_weno = c.afp.disable_weno;
+    // compact10 needs a global line solve; the distributed line solver is not
+    // implemented yet, so fall back to central6 in MPI (warn once on rank 0).
+    vp.use_compact10 = false;
+    if (c.physics.flux_compact10 && world_rank == 0)
+        BLAST_WARN("flux_scheme = \"compact10\" is serial-only; the MPI run "
+                   "falls back to central6");
+    vp.mf_conservative = c.multifluid.conservative;
 
     State U(local_g.nx, local_g.ny, local_g.nz);
     Real start_time = 0.0;
@@ -160,9 +183,68 @@ int main(int argc, char** argv) {
     }
 
     BCSet bc = c.bc;
+
+    // Two-gamma multifluid G = 1/(gamma-1) field (off by default). Initialized
+    // on the LOCAL grid (local_g already carries this rank's global x0/y0/z0
+    // offsets), then halo-exchanged so the inviscid flux reads valid local gamma
+    // in the ghost layers.
+    Field3D Gfield(local_g.nx, local_g.ny, local_g.nz);
+    Gfield.fill(1.0 / (c.physics.eos.gamma - 1.0));
+    const Field3D* gptr = nullptr;
+    MixtureEOS mixEOS;
+    const MixtureEOS* mixptr = nullptr;   // JWL only; two-gamma keeps the legacy path
+    if (c.multifluid.enabled) {
+        MultifluidParams mp;
+        mp.enabled   = true;
+        mp.gamma_air = c.physics.eos.gamma; mp.gamma_p = c.multifluid.gamma_p;
+        mp.R         = c.physics.eos.R;
+        mp.rho_p = c.multifluid.rho_p; mp.T_p = c.multifluid.T_p;
+        mp.rho_a = c.multifluid.rho_a; mp.T_a = c.multifluid.T_a;
+        mp.q = c.multifluid.q; mp.rho_e = c.multifluid.rho_e; mp.T_e = c.multifluid.T_e;
+        mp.cj_u_frac = c.multifluid.cj_u_frac;
+        mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
+        if (c.multifluid.eos == "jwl") {
+            const Real pr = c.multifluid.p_ref, rr = c.multifluid.rho_ref;
+            mp.jwl_mode  = true;
+            mp.jwl.A     = c.multifluid.jwl_A / pr;
+            mp.jwl.B     = c.multifluid.jwl_B / pr;
+            mp.jwl.R1    = c.multifluid.jwl_R1;
+            mp.jwl.R2    = c.multifluid.jwl_R2;
+            mp.jwl.omega = c.multifluid.jwl_omega;
+            mp.jwl.rho0  = c.multifluid.jwl_rho0 / rr;
+            mp.jwl.E0    = c.multifluid.jwl_E0 / pr;
+            mp.rho_cj    = c.multifluid.rho_cj / rr;
+            mp.p_cj      = c.multifluid.p_cj   / pr;
+            mp.rho_a     = c.multifluid.rho_a  / rr;
+            mp.p_a       = c.multifluid.p_a_jwl / pr;
+            mp.phi_switch = c.multifluid.phi_switch;
+            Gfield.fill(0.0);
+        }
+        if (!c.output.restart_path.empty() && world_rank == 0)
+            BLAST_WARN("multifluid restart does not restore the marker; "
+                       "reinitializing from the IC (only valid at t=0)");
+        mf_init_blast(U, Gfield, local_g, mp);
+        gptr = &Gfield;
+        if (mp.jwl_mode) {
+            mixEOS = mp.mixture();
+            mixptr = &mixEOS;
+            vp.rho_floor  = 1e-3 * mp.rho_a;
+            vp.eint_floor = 1e-3 * (mp.p_a / (mp.gamma_air - 1.0));
+            if (world_rank == 0)
+                BLAST_INFO("multifluid ON (MPI, JWL): products rho_cj={} p_cj={} "
+                           "(nondim) vs air rho={} p={}",
+                           mp.rho_cj, mp.p_cj, mp.rho_a, mp.p_a);
+        } else if (world_rank == 0) {
+            BLAST_INFO("multifluid ON (MPI, two-gamma): products gamma={} rho={} "
+                       "T={} vs air gamma={} rho={}",
+                       mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
+        }
+    }
+
     Halo halo(U, domain);
     halo.exchange(U);
     apply_bcs(U, bc, domain);
+    if (gptr) { halo.exchange(Gfield); apply_bcs(Gfield, bc, domain); }
 
     RK3 driver(local_g.nx, local_g.ny, local_g.nz, U.ng());
     if (vp.hyper_method == HyperMethod::Pseudospectral) {
@@ -194,11 +276,18 @@ int main(int argc, char** argv) {
     HDF5Writer writer(c.output.out_dir, c.run_name);
     writer.set_domain(&domain);
 
+    // Aligned, fixed-width CSV table (comma-delimited; pandas: skipinitialspace).
+    constexpr int kStepW = 8, kColW = 16;
     std::ofstream stats_file;
     if (world_rank == 0) {
         stats_file.open(c.output.out_dir + "/" + c.run_name + "_stats.csv");
-        stats_file << "step,time,dt,KE,tke,u_rms,M_t,c_mean,rho_mean,p_mean,"
-                     "T_mean,omega2,div2,eps_total,eps_sol,eps_dil\n";
+        stats_file << std::setw(kStepW) << "step";
+        for (const char* n : {"time", "dt", "KE", "tke", "u_rms", "M_t",
+                 "c_mean", "rho_mean", "p_mean", "T_mean", "omega2", "div2",
+                 "eps_total", "eps_sol", "eps_dil", "e_total", "e_int",
+                 "mom_x", "mom_y", "mom_z", "E_ratio", "M_ratio"})
+            stats_file << ',' << std::setw(kColW) << n;
+        stats_file << '\n';
     }
 
     const long long N_global = static_cast<long long>(global_g.nx) * global_g.ny * global_g.nz;
@@ -235,12 +324,22 @@ int main(int argc, char** argv) {
             r2r::DST_II, r2r::DCT_II, r2r::DCT_II);
     }
 
-    auto log_diagnostics = [&](int step, Real t, Real dt) {
+    Real e_total_0 = 0.0, rho_mean_0 = 0.0;
+    bool cons0_set = false;
+    auto log_diagnostics = [&](int step, Real t, Real dt, bool do_spectra) {
         auto s = velocity_stats(U, eos, N_global, domain.comm());
         auto b = dissipation_budget(U, local_g, eos, vp, N_global, domain.comm());
+        if (!cons0_set) { e_total_0 = s.e_total; rho_mean_0 = s.rho_mean; cons0_set = true; }
+        const Real e_ratio = (e_total_0 != 0.0) ? s.e_total / e_total_0 : 1.0;
+        const Real m_ratio = (rho_mean_0 != 0.0) ? s.rho_mean / rho_mean_0 : 1.0;
+        const Real e_drift = e_ratio - 1.0;
+        const Real m_drift = m_ratio - 1.0;
+        const Real pmag = std::sqrt(s.mom[0]*s.mom[0] + s.mom[1]*s.mom[1]
+                                    + s.mom[2]*s.mom[2]);
+        const Real p_imbalance = pmag / std::max(s.rho_mean * s.c_mean, 1e-30);
         HelmholtzResult h{};
         ShellSpectrum sp{};
-        if (c.output.write_helmholtz || c.output.write_spectra) {
+        if (do_spectra && (c.output.write_helmholtz || c.output.write_spectra)) {
             if (periodic_spec)
                 h = helmholtz_decompose_mpi_dist(U, global_g, *fft_plan, domain);
             else if (slip_spec)
@@ -248,7 +347,7 @@ int main(int argc, char** argv) {
                                                 *dct_plan_u, *dct_plan_v, *dct_plan_w,
                                                 domain);
         }
-        if (c.output.write_spectra) {
+        if (do_spectra && c.output.write_spectra) {
             if (periodic_spec) {
                 sp = velocity_spectrum_mpi_dist(U, global_g, *fft_plan, domain);
             } else if (slip_spec) {
@@ -263,43 +362,87 @@ int main(int argc, char** argv) {
             if (world_rank == 0 && (periodic_spec || slip_spec))
                 writer.append_spectra(h, sp, t, step);
         }
+        // G boundedness / mixing metric (collective: all ranks call the reduce).
+        GStats gs{};
+        if (gptr) gs = mf_g_stats(Gfield, N_global, domain.comm());
         if (world_rank == 0) {
-            stats_file << step << ',' << t << ',' << dt << ','
-                       << s.ke_total << ',' << s.tke << ',' << s.u_rms << ',' << s.M_t << ','
-                       << s.c_mean << ',' << s.rho_mean << ',' << s.p_mean << ','
-                       << s.T_mean << ',' << b.omega2_mean << ',' << b.div2_mean << ','
-                       << b.eps_total << ',' << b.eps_sol << ',' << b.eps_dil << '\n';
+            stats_file << std::setw(kStepW) << step
+                       << std::scientific << std::setprecision(9);
+            auto cc = [&](Real v) { stats_file << ',' << std::setw(kColW) << v; };
+            cc(t); cc(dt); cc(s.ke_total); cc(s.tke); cc(s.u_rms); cc(s.M_t);
+            cc(s.c_mean); cc(s.rho_mean); cc(s.p_mean); cc(s.T_mean);
+            cc(b.omega2_mean); cc(b.div2_mean);
+            cc(b.eps_total); cc(b.eps_sol); cc(b.eps_dil);
+            cc(s.e_total); cc(s.e_int);
+            cc(s.mom[0]); cc(s.mom[1]); cc(s.mom[2]); cc(e_ratio); cc(m_ratio);
+            stats_file << '\n';
             stats_file.flush();
             BLAST_INFO("step {:6d} t={:.6e} dt={:.3e} KE={:.4e} tke={:.4e} M_t={:.4f} "
-                       "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e}",
+                       "eps_sol={:.3e} eps_dil={:.3e} K_dil/K_sol={:.3e} "
+                       "e_tot={:.6e} E/E0={:.12f} dE/E0={:+.2e} "
+                       "M/M0={:.12f} dM/M0={:+.2e} |p|/rhoc={:.2e}",
                        step, t, dt, s.ke_total, s.tke, s.M_t,
                        b.eps_sol, b.eps_dil,
-                       (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0));
+                       (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
+                       s.e_total, e_ratio, e_drift, m_ratio, m_drift, p_imbalance);
+            if (gptr)
+                BLAST_INFO("  multifluid G in [{:.4f}, {:.4f}] var={:.3e}",
+                           gs.gmin, gs.gmax, gs.gvar);
         }
     };
 
+    // Output cadence: each kind fires on a physical-time interval (*_dt > 0,
+    // time-uniform) or else a step interval (*_every). `due` advances the next
+    // trigger time past the current t so a large dt cannot skip a window.
+    const int spec_every = (c.output.spectra_every > 0) ? c.output.spectra_every
+                                                        : c.output.stats_every;
+    auto due = [](Real t, Real interval, Real& next, int step, int step_every) {
+        if (interval > 0.0) {
+            if (t < next - 1e-12) return false;
+            next = (std::floor(t / interval) + 1.0) * interval;
+            return true;
+        }
+        return step_every > 0 && step % step_every == 0;
+    };
+    Real next_stats_t = start_time + c.output.stats_dt;
+    Real next_spec_t  = start_time + c.output.spectra_dt;
+    Real next_snap_t  = start_time + c.output.snapshot_dt;
+    Real next_ckpt_t  = start_time + c.output.checkpoint_dt;
+
     Real t = start_time;
     int step = start_step;
-    log_diagnostics(step, t, 0.0);
-    writer.write_snapshot(U, global_g, eos, t, step);
+    log_diagnostics(step, t, 0.0, /*do_spectra=*/true);
+    writer.write_snapshot(U, global_g, eos, t, step, gptr, mixptr);
 
     const std::string ckpt_path =
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
         Real dt_hyp = max_dt_hyperbolic(U, local_g, eos, c.time.cfl_hyperbolic,
-                                         domain.comm());
+                                         domain.comm(), gptr, mixptr);
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, local_g, vp, c.time.cfl_viscous, domain.comm())
                     : 1e30;
-        Real dt = std::min({dt_hyp, dt_vis, c.time.dt_max});
+        // LAD viscous limit (one-step lag), reduced across ranks.
+        Real dt_abv = 1e30;
+        if (vp.abv_enabled) {
+            Real num_local = driver.last_abv_nu_max();
+            Real num = num_local;
+            MPI_Allreduce(&num_local, &num, 1, MPI_DOUBLE, MPI_MAX, domain.comm());
+            if (num > 0.0) {
+                const Real dxm = std::min({local_g.dx(), local_g.dy(), local_g.dz()});
+                dt_abv = c.time.cfl_viscous * dxm * dxm / num;
+            }
+        }
+        Real dt = std::min({dt_hyp, dt_vis, dt_abv, c.time.dt_max});
         if (t + dt > c.time.t_end) dt = c.time.t_end - t;
         if (!std::isfinite(dt) || dt <= 0.0) {
             if (world_rank == 0) BLAST_ERROR("non-finite dt at step {}", step);
             break;
         }
 
-        driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo);
+        driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo, gptr, mixptr);
+        if (gptr) mf_advect_G(Gfield, U, local_g, bc, dt, domain, halo);
         if (forcing) {
             forcing->evolve_ou(dt);
             forcing->apply(U, local_g, dt, domain.comm());
@@ -309,11 +452,15 @@ int main(int argc, char** argv) {
         t += dt;
         ++step;
 
-        if (step % c.output.stats_every == 0)   log_diagnostics(step, t, dt);
-        if (step % c.output.snapshot_every == 0)
-            writer.write_snapshot(U, global_g, eos, t, step);
-        if (c.output.checkpoint_every > 0
-            && step % c.output.checkpoint_every == 0)
+        const bool do_stats = due(t, c.output.stats_dt, next_stats_t,
+                                  step, c.output.stats_every);
+        const bool do_spec  = c.output.write_spectra
+                            && due(t, c.output.spectra_dt, next_spec_t,
+                                   step, spec_every);
+        if (do_stats || do_spec) log_diagnostics(step, t, dt, do_spec);
+        if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every))
+            writer.write_snapshot(U, global_g, eos, t, step, gptr, mixptr);
+        if (due(t, c.output.checkpoint_dt, next_ckpt_t, step, c.output.checkpoint_every))
             write_checkpoint(ckpt_path, U, global_g, t, step, domain);
     }
 

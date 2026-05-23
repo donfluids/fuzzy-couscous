@@ -47,6 +47,48 @@ struct ViscousParams {
     // Selects the spectral basis when hyper_method == Pseudospectral.
     // Ignored otherwise.
     SpectralBCMode spectral_bc_mode = SpectralBCMode::Periodic;
+
+    // ---- Localized artificial diffusivity (LAD / Kawai-Lele) -------------
+    // A controlled, quantifiable shock/contact dissipation that lets the
+    // central scheme run without WENO. Each diffusivity is a field large only
+    // where a 2nd-derivative sensor of the relevant quantity is sharp:
+    //   beta_art  = C_beta  * rho * H(-div u) * |D^2(div u)| * h^2   (bulk; shocks)
+    //   mu_art    = C_mu    * rho *            |D^2(|S|)|     * h^2   (shear)
+    //   kappa_art = C_kappa * (rho c/T) *      |D^2 e|        * h     (thermal; contacts)
+    // where D^2 is the (grid-scaled) 2nd difference and h the cell size.
+    // Disabled by default; the existing WENO/Ducros path is untouched.
+    bool abv_enabled      = false;
+    // Sensor derivative order r (Cook/Kawai-Lele). r=4 is canonical (more
+    // scale-selective: smooth-flow LAD vanishes as Δ^{r+2}); r=2 is the
+    // reduced variant. Both fit NGHOST=6 (the r-th difference of theta uses a
+    // radius-r/2 stencil on theta, which is itself a radius-3 derivative of u).
+    int  abv_r            = 4;
+    Real abv_cbeta        = 1.0;     // C_beta  (bulk)
+    Real abv_cmu          = 0.002;   // C_mu    (shear)
+    Real abv_ckappa       = 0.01;    // C_kappa (thermal)
+    // Artificial mass/contact diffusivity (Cook 2007 / Kawai-Lele-Mani): smooths
+    // density contacts (rho jump at ~constant u, p) that the bulk/shear/thermal
+    // sensors miss. Applied consistently (mass + u-weighted momentum + KE-weighted
+    // energy) so velocity and pressure are preserved across the contact.
+    Real abv_cD           = 0.01;    // C_D     (mass/contact)
+    // When true, the Ducros/WENO shock sensor is suppressed (central6
+    // everywhere) so LAD is the sole shock treatment. Only meaningful with
+    // abv_enabled.
+    bool abv_disable_weno = false;
+    // When true, smooth-region inviscid flux uses the 10th-order conservative
+    // compact reconstruction (Lele penta) instead of explicit central6; shock
+    // faces still go to WENO5.
+    bool use_compact10 = false;
+    // Multifluid: use the conservative telescoping flux (local-gamma + WENO at
+    // contacts) instead of the non-conservative gated double-flux. Conserves
+    // total energy; small pressure oscillations at strong contacts.
+    bool mf_conservative = false;
+    // Positivity floors applied by the RK3 multifluid path (rho, internal-energy
+    // density). Defaults match the historical two-gamma constants (air ~ O(1)).
+    // For a strongly contrasting JWL run (ambient air ~ 1e-3) the driver sets
+    // these relative to the ambient state so the floor cannot clip real air.
+    Real rho_floor  = 1e-5;
+    Real eint_floor = 1e-6;
 };
 
 // Local 3x3 velocity gradient at a cell, dudx[v][d] = d u_v / d x_d,
@@ -84,6 +126,32 @@ inline ViscousFluxVec viscous_flux(const CellState& C,
     const Real kappa = vp.mu * eos.eos.cp() / vp.prandtl;
     const Real q_d   = -kappa * C.dTdx[d];
 
+    ViscousFluxVec G{};
+    G.f[RHO ] = 0.0;
+    G.f[RHOU] = tau[0];
+    G.f[RHOV] = tau[1];
+    G.f[RHOW] = tau[2];
+    G.f[RHOE] = C.u * tau[0] + C.v * tau[1] + C.w * tau[2] - q_d;
+    return G;
+}
+
+// Artificial (LAD) flux vector for direction d, using per-cell artificial
+// shear (mu_a), bulk (beta_a), and thermal (kappa_a) diffusivities. Same
+// Stokes structure as viscous_flux(), but the bulk and thermal coefficients
+// are independent (LAD does not tie kappa to mu via Prandtl). Kept separate
+// from the physical viscous flux so it can use a compact (2nd-order) outer
+// divergence, which is all the 2nd-derivative LAD sensor's stencil width
+// supports within NGHOST=6.
+inline ViscousFluxVec artificial_flux(const CellState& C, Real mu_a,
+                                      Real beta_a, Real kappa_a, int d) {
+    const Real div_u = C.dudx[0][0] + C.dudx[1][1] + C.dudx[2][2];
+    Real tau[3];
+    const Real lambda = beta_a - (2.0 / 3.0) * mu_a;
+    for (int j = 0; j < 3; ++j) {
+        tau[j] = mu_a * (C.dudx[d][j] + C.dudx[j][d]);
+        if (j == d) tau[j] += lambda * div_u;
+    }
+    const Real q_d = -kappa_a * C.dTdx[d];
     ViscousFluxVec G{};
     G.f[RHO ] = 0.0;
     G.f[RHOU] = tau[0];

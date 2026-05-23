@@ -1,0 +1,282 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref}
+
+\newcommand{\dpar}[2]{\frac{\partial #1}{\partial #2}}
+\newcommand{\D}{\mathrm{d}}
+\newcommand{\uvec}{\mathbf{u}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Governing Equations of the \textbf{fuzzy-couscous} Solver}
+\author{Clean-room compressible LES solver for blast-induced turbulence}
+\date{Generated 2026-05-23}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document collects every governing equation the \textbf{fuzzy-couscous}
+solver discretizes: the compressible Navier--Stokes system, the inviscid and
+viscous fluxes, the three equations of state (ideal gas, two-$\gamma$ mixture,
+and Jones--Wilkins--Lee), the multifluid marker transport, the LES closure
+(hyperdissipation, localized artificial diffusivity, Ducros sensor), the
+Besnard--Harlow--Rauenzahn (BHR) variable-density turbulence model, the SSP-RK3
+time integrator, and the diagnostic identities. Each section cites the file that
+implements it, so the equations stay traceable to the code.
+\end{abstract}
+
+\tableofcontents
+
+\section{Compressible Navier--Stokes system}
+\label{sec:ns}
+
+The solver advances the conservative compressible Navier--Stokes equations for a
+single fluid (or a mixture; see \S\ref{sec:eos}) on a periodic / slip-wall
+Cartesian box. With conserved state
+$\mathbf{U} = (\rho,\ \rho\uvec,\ \rho E)^{\mathsf T}$,
+\begin{align}
+\dpar{\rho}{t} + \nabla\!\cdot(\rho\uvec) &= 0, \\
+\dpar{(\rho\uvec)}{t} + \nabla\!\cdot\!\left(\rho\uvec\otimes\uvec + p\,\mathbf{I}\right)
+   &= \nabla\!\cdot\boldsymbol{\tau}, \\
+\dpar{(\rho E)}{t} + \nabla\!\cdot\!\left[(\rho E + p)\,\uvec\right]
+   &= \nabla\!\cdot(\boldsymbol{\tau}\cdot\uvec) - \nabla\!\cdot\mathbf{q},
+\end{align}
+where $\rho$ is density, $\uvec=(u,v,w)$ velocity, $p$ pressure, and the total
+specific energy is $E = e + \tfrac12\,|\uvec|^2$ with $e$ the specific internal
+energy. The right-hand side is assembled as a telescoping difference of face
+fluxes, $R_i \mathrel{-}= (F_{i+1/2}-F_{i-1/2})/\Delta x$, so the discrete scheme
+is conservative by construction (\code{numerics/RHS.cpp}).
+
+\section{Inviscid flux}
+\label{sec:euler}
+
+The hyperbolic (Euler) flux in direction $d\in\{x,y,z\}$ with unit normal
+$\mathbf{n}_d$ and normal velocity $u_d=\uvec\cdot\mathbf{n}_d$ is
+\begin{equation}
+\mathbf{F}^{\text{euler}}_d(\mathbf{U},p) =
+\begin{pmatrix}
+\rho u_d \\
+\rho u\, u_d + p\,n_{d,x} \\
+\rho v\, u_d + p\,n_{d,y} \\
+\rho w\, u_d + p\,n_{d,z} \\
+(\rho E + p)\,u_d
+\end{pmatrix}.
+\end{equation}
+It is evaluated by a hybrid 6th-order central / 5th-order WENO reconstruction in
+flux-difference form with Lax--Friedrichs splitting; the WENO weight is gated by
+the shock sensor of \S\ref{sec:lad} (\code{physics/EulerFlux.hpp},
+\code{numerics/WENO5.hpp}). The flux is EOS-agnostic: $p$ is supplied by
+\S\ref{sec:eos}.
+
+\section{Viscous fluxes}
+\label{sec:viscous}
+
+The viscous stress is the compressible Stokes tensor with an optional bulk
+viscosity $\mu_b$,
+\begin{equation}
+\tau_{ij} = \mu\!\left(\dpar{u_i}{x_j} + \dpar{u_j}{x_i}
+            - \tfrac23\,\delta_{ij}\,\nabla\!\cdot\uvec\right)
+          + \mu_b\,\delta_{ij}\,\nabla\!\cdot\uvec,
+\end{equation}
+and the heat flux is Fourier's law
+\begin{equation}
+\mathbf{q} = -\kappa\,\nabla T,
+\qquad \kappa = \frac{\mu\,c_p}{\mathrm{Pr}},
+\end{equation}
+with $T$ the temperature and $\mathrm{Pr}$ the Prandtl number. First derivatives
+use composed 6th-order central stencils (NGHOST $=6$), so the viscous Laplacian
+is 6th-order accurate (\code{physics/ViscousFlux.hpp},
+\code{numerics/Gradients.cpp}).
+
+\section{Equation of state}
+\label{sec:eos}
+
+The pressure closure maps $(\text{marker},\rho,e) \mapsto (p,c)$ through a single
+mixture dispatcher (\code{physics/MixtureEOS.hpp}), where $c$ is the sound speed
+used at the flux and CFL sites.
+
+\subsection{Ideal gas}
+\begin{equation}
+p = (\gamma-1)\,\rho e, \qquad c^2 = \frac{\gamma p}{\rho}.
+\end{equation}
+
+\subsection{Two-$\gamma$ mixture (variable-density contact)}
+A per-cell advected marker $G = 1/(\gamma-1)$ selects between ambient air and a
+second ideal gas (products with $\gamma_p$). The effective ratio of specific
+heats is recovered as $\gamma = 1 + 1/G$, giving
+\begin{equation}
+p = \frac{\rho e}{G}, \qquad c^2 = \frac{(1+1/G)\,p}{\rho}.
+\end{equation}
+This is the original variable-density contact model (\code{physics/Multifluid.hpp}).
+
+\subsection{Jones--Wilkins--Lee (JWL) for real high explosives}
+Detonation products (e.g.\ TNT) obey the JWL EOS, which an ideal gas cannot
+represent. With relative volume $V = \rho_0/\rho$ ($\rho_0$ the reference/solid
+density) and Gr\"uneisen coefficient $\omega$,
+\begin{equation}
+p(\rho,e) = A\!\left(1 - \frac{\omega}{R_1 V}\right)e^{-R_1 V}
+          + B\!\left(1 - \frac{\omega}{R_2 V}\right)e^{-R_2 V}
+          + \omega\,\rho\,e .
+\end{equation}
+Writing $f(V)$ for the reference-curve (first two) terms, $p = f(V) + \omega\rho e$,
+which inverts in closed form for the internal energy at fixed density,
+$e = (p - f(V))/(\omega\rho)$, and yields the isentropic sound speed
+$c^2 = (\partial p/\partial\rho)_s$. With $A=B=0$ the EOS reduces to an ideal gas
+with $\gamma = 1+\omega$, the hook that lets the mixture dispatcher treat air and
+products uniformly (\code{physics/JWL.hpp}).
+
+The shipped TNT parameter set (LLNL / Dobratz \& Crawford) is:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Parameter & Symbol & Value \\
+\midrule
+Reference coefficient & $A$ & \SI{371.2}{GPa} \\
+Reference coefficient & $B$ & \SI{3.231}{GPa} \\
+Reference exponent    & $R_1$ & $4.15$ \\
+Reference exponent    & $R_2$ & $0.95$ \\
+Gr\"uneisen coefficient & $\omega$ & $0.30$ \\
+Reference density     & $\rho_0$ & \SI{1630}{kg/m^3} \\
+Detonation energy     & $E_0$ & \SI{7.0}{GPa} \\
+CJ pressure           & $p_{\mathrm{CJ}}$ & \SI{21}{GPa} \\
+Detonation speed      & $D$ & \SI{6930}{m/s} \\
+\bottomrule
+\end{tabular}
+\end{center}
+Runs are nondimensionalized with $\rho_{\text{ref}}=\rho_0$ and
+$p_{\text{ref}}=p_{\mathrm{CJ}}$ so the $\sim$1000:1 density and $\sim$$10^5$:1
+pressure contrasts (Atwood $\approx 0.999$) stay well conditioned. The CJ density
+$\rho_{\mathrm{CJ}} = \rho_0/(1 - p_{\mathrm{CJ}}/(\rho_0 D^2))$ is the
+Rankine--Hugoniot value, self-consistent with the JWL sound speed at CJ
+($c_{\mathrm{CJ}} = D - u_{\mathrm{CJ}}$).
+
+\section{Multifluid marker transport}
+\label{sec:multifluid}
+
+The marker (the two-$\gamma$ field $G$, or the products mass fraction
+$\phi\in[0,1]$ for JWL) is advected with the flow,
+\begin{equation}
+\dpar{(\rho\,\chi)}{t} + \nabla\!\cdot(\rho\,\chi\,\uvec) = 0,
+\qquad \chi \in \{G,\ \phi\}.
+\end{equation}
+The contact is handled either by a gated double-flux (non-oscillatory) or an
+opt-in fully conservative flux (\code{conservative = true}); the latter conserves
+total energy at the cost of small contact oscillations
+(\code{physics/Multifluid.cpp}).
+
+\section{LES closure and shock capturing}
+\label{sec:lad}
+
+\subsection{Spectral hyperdissipation (LES sink)}
+The sub-grid sink is a hyper-viscous term applied to every conserved variable,
+\begin{equation}
+\left.\dpar{\mathbf{U}}{t}\right|_{\text{LES}} = -\,\nu_h\,\nabla^4 \mathbf{U},
+\end{equation}
+whose discrete operator matches the analytic $k^4$ damping; under SSP-RK3 it
+preserves the $e^{-\nu_h k^4 t}$ eigenvalue decay (\code{numerics/HyperdissipationSpectral.cpp}).
+The empirical stability invariant is fixed $\nu_{\text{eff}}=\nu_h k_{\max}^2$;
+between resolutions $\nu_h$ scales as $\Delta x^2$ (see the README TGV note).
+
+\subsection{Ducros shock sensor}
+The hybrid central/WENO blend and the artificial diffusivity are gated by the
+Ducros sensor
+\begin{equation}
+\theta = \frac{(\nabla\!\cdot\uvec)^2}{(\nabla\!\cdot\uvec)^2 + |\boldsymbol{\omega}|^2 + \varepsilon},
+\end{equation}
+with vorticity $\boldsymbol{\omega}=\nabla\times\uvec$ and a small $\varepsilon$;
+$\theta\to1$ in compression (shocks), $\theta\to0$ in smooth/vortical regions. A
+pressure-jump $\tanh$ ramp and a half-width-2 dilation along the face direction
+sharpen the gate (\code{numerics/Ducros.cpp}).
+
+\subsection{Localized artificial diffusivity (LAD)}
+For strong blasts the Cook/Kawai--Lele localized artificial diffusivity adds
+grid-dependent, sensor-localized dissipation to shocks and contacts,
+\begin{equation}
+\mu^\ast = C_\mu\,\rho\,|\nabla^r(\nabla\!\cdot\uvec)|\,\Delta^{r+2},
+\qquad
+\beta^\ast = C_\beta\,\rho\,|\nabla^r(\nabla\!\cdot\uvec)|\,\Delta^{r+2},
+\end{equation}
+with an analogous artificial mass/contact diffusivity $D^\ast$ for the
+density-contact piece; the canonical order is $r=4$ (\code{numerics/ArtificialDiffusivity.cpp}).
+
+\section{BHR variable-density turbulence model}
+\label{sec:bhr}
+
+The Besnard--Harlow--Rauenzahn $k$--$\varepsilon$--$a$--$b$ model runs as an
+operator-split sub-step alongside the LES hydro. The six primitives are the
+turbulent kinetic energy $k$, its dissipation $\varepsilon$, the turbulent mass
+flux $a_i$, and the density--specific-volume covariance
+$b = -\,\overline{\rho'\,(1/\rho)'}$. The dominant TKE source is the
+variable-density (baroclinic) production
+\begin{equation}
+P_{\mathrm{VD}} = -\,a_i\,\dpar{p}{x_i},
+\end{equation}
+validated as dominant in the LES $a/b$ budget. The turbulent viscosity is
+$\nu_t = C_\mu\,k^2/\varepsilon$, and the modeled transport equations carry
+gradient-diffusion terms with Schmidt numbers
+$(\sigma_k,\sigma_\varepsilon,\sigma_a,\sigma_b)$
+(\code{turbulence/BHR.hpp}, \code{turbulence/BHR.cpp}).
+
+When two-way feedback is enabled, the model returns a Reynolds-stress divergence
+and dissipative heating to $\mathbf{U}$, blended by the resolution-adequacy sensor
+\begin{equation}
+f_k = \frac{k_{\mathrm{sgs}}}{k_{\mathrm{res}} + k_{\mathrm{sgs}}},
+\qquad
+k_{\mathrm{res}} = \tfrac12\,\big|\uvec - \widetilde{\uvec}\big|^2,
+\end{equation}
+where $\widetilde{\uvec}$ is a test-filtered velocity (resolved energy in the
+$[\Delta x, 2\Delta x]$ octave); $f_k\to1$ under-resolved (RANS), $f_k\to0$ when
+the LES resolves the energy.
+
+\section{Time integration}
+\label{sec:rk3}
+
+Time advance uses the three-stage strong-stability-preserving Runge--Kutta
+(SSP-RK3, Gottlieb--Shu) scheme on $\mathbf{U}^n \to \mathbf{U}^{n+1}$ with
+right-hand side $\mathcal{L}(\mathbf{U})$:
+\begin{align}
+\mathbf{U}^{(1)} &= \mathbf{U}^n + \Delta t\,\mathcal{L}(\mathbf{U}^n),\\
+\mathbf{U}^{(2)} &= \tfrac34\,\mathbf{U}^n + \tfrac14\,\mathbf{U}^{(1)}
+                   + \tfrac14\,\Delta t\,\mathcal{L}(\mathbf{U}^{(1)}),\\
+\mathbf{U}^{n+1} &= \tfrac13\,\mathbf{U}^n + \tfrac23\,\mathbf{U}^{(2)}
+                   + \tfrac23\,\Delta t\,\mathcal{L}(\mathbf{U}^{(2)}).
+\end{align}
+The time step obeys the minimum of a hyperbolic CFL ($\propto \Delta x/(|\uvec|+c)$)
+and a viscous limit; in MPI runs both are reduced with \code{MPI\_Allreduce(MIN)}
+(\code{numerics/RK3.cpp}, \code{numerics/RHS.cpp}).
+
+\section{Diagnostic identities}
+\label{sec:diag}
+
+\subsection{Helmholtz decomposition}
+The velocity is split into solenoidal and dilatational parts,
+$\uvec = \uvec_s + \uvec_d$ with $\nabla\!\cdot\uvec_s = 0$ and
+$\nabla\times\uvec_d = \mathbf{0}$, giving the kinetic-energy split
+$K = K_{\mathrm{sol}} + K_{\mathrm{dil}}$ and the per-shell spectra
+$E(k) = E_{\mathrm{sol}}(k) + E_{\mathrm{dil}}(k)$ (\code{diagnostics/Spectra.cpp}).
+
+\subsection{Dissipation budget}
+The resolved dissipation is split into solenoidal and dilatational contributions,
+\begin{equation}
+\varepsilon_{\text{total}} = \frac{\mu}{\rho}\,\big\langle \tau_{ij}\,\partial_j u_i\big\rangle,
+\qquad
+\varepsilon_{\mathrm{sol}} = \nu\,\langle|\boldsymbol{\omega}|^2\rangle,
+\qquad
+\varepsilon_{\mathrm{dil}} = \tfrac43\,\nu\,\langle(\nabla\!\cdot\uvec)^2\rangle,
+\end{equation}
+together with the turbulent Mach number $M_t = u_{\text{rms}}/\langle c\rangle$
+(\code{diagnostics/Statistics.cpp}).
+
+\subsection{Conservation monitors}
+For a closed chamber the totals $E/E_0$ and $M/M_0$ are conserved to round-off by
+the discrete divergence theorem (telescoping face fluxes plus $\uvec\cdot\mathbf{n}=0$
+at slip walls); the internal energy $e_{\text{int}} = \sum(\rho E - \tfrac12\rho|\uvec|^2)$
+is accumulated directly so $KE + e_{\text{int}} = e_{\text{total}}$ is a genuine
+consistency check rather than an identity (\code{diagnostics/Statistics.cpp};
+see the README for the conservation-vs-truncation discussion).
+
+\end{document}

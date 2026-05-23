@@ -45,7 +45,7 @@ t_end          = 0.15
 max_steps      = 3000
 
 [output]
-out_dir         = "out_chamber_ens_REPLACEME"
+out_dir         = "runs/chamber/out_chamber_ens_REPLACEME"
 snapshot_every  = 100000     # snapshots off for ensemble runs
 stats_every     = 5
 write_spectra   = false

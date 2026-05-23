@@ -52,10 +52,11 @@ RUNS = REPO_ROOT / "runs"
 DATA = REPO_ROOT / "data"
 FIGS = REPO_ROOT / "figs"
 
-#: Canonical run categories. ``scaling`` is populated by the runs migration from
-#: the ``scaling/`` source location (its dirs are not ``out_*``-named);
-#: ``misc`` is the documented fallback for names that match no rule.
-CATEGORIES = ("blast", "tgv", "bhr", "chamber", "tnt", "scaling", "misc")
+#: Canonical run categories. ``scaling`` is populated both by the runs migration
+#: from the ``scaling/`` source location (dirs not ``out_*``-named) and by
+#: ``out_scaling_*`` configs; ``hit`` holds forced homogeneous-isotropic-
+#: turbulence runs; ``misc`` is the documented fallback for names matching no rule.
+CATEGORIES = ("blast", "tgv", "bhr", "chamber", "tnt", "scaling", "hit", "misc")
 
 #: Ordered ``(token, category)`` rules; first match wins. Each rule matches the
 #: run-directory *name* (e.g. ``"out_blast_128_cj_t5"``). A token that starts
@@ -63,7 +64,9 @@ CATEGORIES = ("blast", "tgv", "bhr", "chamber", "tnt", "scaling", "misc")
 #: substring. The ``_chamber`` substring rule is listed first so the closed-
 #: chamber comparison set (``out_sf_chamber_*``, ``out_tg_chamber_*``,
 #: ``out_tnt_chamber_*``) groups together under ``chamber/`` rather than being
-#: split across ``tnt/`` and ``misc/``.
+#: split across ``tnt/`` and ``misc/``. ``out_paper`` (the paper Case 1 closed-
+#: chamber production run, slip walls on all faces) and ``out_scaling`` (scaling
+#: drivers reusing the same chamber physics) are kept alongside their kin.
 _RULES: tuple[tuple[str, str], ...] = (
     ("_chamber", "chamber"),
     ("out_tgv", "tgv"),
@@ -71,6 +74,9 @@ _RULES: tuple[tuple[str, str], ...] = (
     ("out_blast", "blast"),
     ("out_bhr", "bhr"),
     ("out_rans", "bhr"),
+    ("out_scaling", "scaling"),
+    ("out_hit", "hit"),
+    ("out_paper", "chamber"),
 )
 
 

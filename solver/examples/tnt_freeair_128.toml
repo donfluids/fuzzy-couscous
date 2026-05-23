@@ -97,7 +97,7 @@ max_steps      = 200000
 enabled = false
 
 [output]
-out_dir          = "runs/out_tnt_freeair_128"
+out_dir          = "runs/tnt/out_tnt_freeair_128"
 stats_dt         = 0.005
 spectra_dt       = 0.005
 snapshot_dt      = 0.02

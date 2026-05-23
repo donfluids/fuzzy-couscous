@@ -42,7 +42,7 @@ max_steps      = 100000
 enabled = false
 
 [output]
-out_dir          = "out_tgv128_hyper2"
+out_dir          = "runs/tgv/out_tgv128_hyper2"
 snapshot_every   = 1000000          # only the initial step-0 snapshot
 stats_every      = 50               # CSV + spectra dump cadence
 checkpoint_every = 2000             # ~10 ckpts to t=12 at dt~6e-4

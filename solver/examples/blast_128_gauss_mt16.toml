@@ -52,7 +52,7 @@ max_steps      = 8000
 enabled = false
 
 [output]
-out_dir          = "runs/out_blast_128_gauss_mt16"
+out_dir          = "runs/blast/out_blast_128_gauss_mt16"
 snapshot_every   = 1000000
 stats_every      = 20
 checkpoint_every = 5000

@@ -42,7 +42,7 @@ max_steps      = 30
 enabled = false
 
 [output]
-out_dir          = "out_tgv256_hyper2_calib"
+out_dir          = "runs/tgv/out_tgv256_hyper2_calib"
 snapshot_every   = 1000000
 stats_every      = 5
 checkpoint_every = 0

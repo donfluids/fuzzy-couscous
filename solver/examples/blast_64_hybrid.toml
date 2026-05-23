@@ -43,7 +43,7 @@ enabled=true
 feedback=true
 b_seed=0.5
 [output]
-out_dir="out_blast_64_hybrid"
+out_dir="runs/blast/out_blast_64_hybrid"
 snapshot_every=120
 stats_every=20
 write_spectra=false

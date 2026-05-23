@@ -47,7 +47,7 @@ dt_max         = 1e30
 max_steps      = 5000
 
 [output]
-out_dir          = "out_chamber_smoke"
+out_dir          = "runs/chamber/out_chamber_smoke"
 snapshot_every   = 50
 stats_every      = 5
 checkpoint_every = 100

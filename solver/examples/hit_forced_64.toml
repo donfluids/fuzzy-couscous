@@ -52,7 +52,7 @@ seed       = 12345
 enabled = false
 
 [output]
-out_dir          = "out_hit_forced_64"
+out_dir          = "runs/hit/out_hit_forced_64"
 snapshot_every   = 50000
 stats_every      = 50
 write_spectra    = true

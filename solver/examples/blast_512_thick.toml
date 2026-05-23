@@ -56,7 +56,7 @@ max_steps      = 200000
 enabled = false
 
 [output]
-out_dir          = "runs/out_blast_512_thick"
+out_dir          = "runs/blast/out_blast_512_thick"
 # Physical-time cadences (robust to varying dt). t_end = 0.1.
 stats_dt         = 0.0005     # statistics every 0.0005  (~200 rows)
 spectra_dt       = 0.0005     # spectra (Helmholtz + shell) every 0.0005

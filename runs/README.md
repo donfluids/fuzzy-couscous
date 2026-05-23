@@ -14,8 +14,12 @@ per-category `.gitkeep` placeholders are tracked.
 | `chamber/` | closed-chamber comparison set (sf / tg / tnt) | name contains `_chamber` |
 | `tnt/`     | TNT / JWL free-air and smoke runs | name starts `out_tnt` (non-chamber) |
 | `bhr/`     | BHR / RANS turbulence-model runs | name starts `out_bhr` or `out_rans` |
-| `scaling/` | strong-scaling sweeps, PGO training, logs | from the `scaling/` drivers |
+| `scaling/` | strong-scaling sweeps, PGO training, logs | `scaling/` drivers + `out_scaling_*` |
+| `hit/`     | forced homogeneous-isotropic-turbulence runs | name starts `out_hit` |
 | `misc/`    | anything matching no rule (e.g. `out_mpi_smoke`) | fallback |
+
+The paper Case 1 production run (`out_paper_case1`, slip walls on all faces) is
+grouped under `chamber/` with the rest of the closed-chamber cases.
 
 The taxonomy is defined once in `postprocessing/paths.py` (`category_of` /
 `run_dir`). Analysis scripts resolve a run with `run_dir("out_blast_128_x")`

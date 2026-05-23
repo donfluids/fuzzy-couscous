@@ -96,6 +96,14 @@ class TestCategoryOf(unittest.TestCase):
         self.assertEqual(paths.category_of("out_bhr_seed1"), "bhr")
         self.assertEqual(paths.category_of("out_rans_bhr"), "bhr")
 
+    def test_scaling_hit_paper(self):
+        self.assertEqual(paths.category_of("out_scaling_case1_256"), "scaling")
+        self.assertEqual(paths.category_of("out_scaling_case1_64_pgo_train"), "scaling")
+        self.assertEqual(paths.category_of("out_hit_forced_32"), "hit")
+        self.assertEqual(paths.category_of("out_hit_forced_64"), "hit")
+        # paper Case 1 is the closed-chamber production run -> chamber.
+        self.assertEqual(paths.category_of("out_paper_case1"), "chamber")
+
     def test_unknown_falls_back_to_misc(self):
         self.assertEqual(paths.category_of("out_mpi_smoke"), "misc")
         self.assertEqual(paths.category_of("something_else"), "misc")

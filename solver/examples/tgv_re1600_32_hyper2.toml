@@ -41,7 +41,7 @@ max_steps      = 100000
 enabled = false
 
 [output]
-out_dir          = "out_tgv32_hyper2"
+out_dir          = "runs/tgv/out_tgv32_hyper2"
 snapshot_every   = 50000
 stats_every      = 10
 write_spectra    = true

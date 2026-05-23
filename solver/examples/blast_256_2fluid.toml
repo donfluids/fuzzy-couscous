@@ -63,7 +63,7 @@ max_steps      = 100000
 enabled = false
 
 [output]
-out_dir          = "runs/out_blast_256_2fluid"
+out_dir          = "runs/blast/out_blast_256_2fluid"
 stats_dt         = 0.0005
 spectra_dt       = 0.0005
 snapshot_dt      = 0.005      # full-field dumps for baroclinic_source.py

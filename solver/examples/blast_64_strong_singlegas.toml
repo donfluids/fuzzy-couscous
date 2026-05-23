@@ -35,7 +35,7 @@ cfl_hyperbolic=0.3
 t_end=0.002
 max_steps=200000
 [output]
-out_dir="out_blast_64_strong_sg"
+out_dir="runs/blast/out_blast_64_strong_sg"
 snapshot_every=1000000
 stats_every=1
 write_spectra=false

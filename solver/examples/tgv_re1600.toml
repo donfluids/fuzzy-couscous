@@ -57,7 +57,7 @@ every   = 5
 sigma   = 0.15
 
 [output]
-out_dir          = "out_tgv_re1600"
+out_dir          = "runs/tgv/out_tgv_re1600"
 snapshot_every   = 600           # ~5 snapshots
 stats_every      = 10
 checkpoint_every = 0

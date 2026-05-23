@@ -5,8 +5,8 @@
 # resolving outside /usr/lib/x86_64-linux-gnu/.
 #
 # Usage:
-#   ./solver/run_mpi.sh ctest --test-dir build_mpi --output-on-failure
-#   ./solver/run_mpi.sh mpirun -n 8 ./build_mpi/blast_les_mpi case.toml
+#   ./solver/run_mpi.sh ctest --test-dir solver/build_mpi --output-on-failure
+#   ./solver/run_mpi.sh mpirun -n 8 ./solver/build_mpi/blast_les_mpi case.toml
 #
 # See docs/solutions/build-errors/mpi-build-fftw3-and-mpi-abi-mismatch-2026-05-17.md
 set -euo pipefail

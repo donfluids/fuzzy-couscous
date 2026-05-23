@@ -1,9 +1,10 @@
 ---
 title: "refactor: Reorganize fuzzy-couscous repo (runs, post-processing, docs, equations PDF)"
 type: refactor
-status: active
+status: completed
 depth: deep
 created: 2026-05-23
+completed: 2026-05-23
 branch_base: main
 ---
 

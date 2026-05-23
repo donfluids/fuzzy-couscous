@@ -164,6 +164,24 @@ struct MultifluidConfig {
     Real phi_switch = 0.5;               // products if phi >= phi_switch
     // Nondimensional reference scales (1.0 -> params already nondimensional).
     Real rho_ref = 1.0, p_ref = 1.0;
+
+    // ---- Five-equation model (eos = "five_equation") -----------------------
+    // Two coexisting phases, each "stiffened_gas" (ideal = pinf 0) or "jwl".
+    // The IC is a tanh-blended bubble of phase 0 (radius ic.r0): volume fraction
+    // a1 from a1_out (ambient) to a1_in (bubble), phase densities rho1/rho2,
+    // pressures p_out/p_in, optionally translating at (u0,v0,w0).
+    std::string ph1_kind = "stiffened_gas", ph2_kind = "stiffened_gas";
+    Real ph1_gamma = 1.4, ph1_pinf = 0.0;
+    Real ph2_gamma = 1.4, ph2_pinf = 0.0;
+    Real fe_a1_in = 1.0 - 1e-6, fe_a1_out = 1e-6;
+    Real fe_rho1 = 1.0, fe_rho2 = 1.0;
+    Real fe_p_in = 1.0, fe_p_out = 1.0;
+    Real fe_u0 = 0.0, fe_v0 = 0.0, fe_w0 = 0.0;
+    // Per-phase JWL coefficients (used when ph{1,2}_kind == "jwl").
+    Real ph1_jwl_A = 0.0, ph1_jwl_B = 0.0, ph1_jwl_R1 = 0.0, ph1_jwl_R2 = 0.0;
+    Real ph1_jwl_omega = 0.0, ph1_jwl_rho0 = 1.0;
+    Real ph2_jwl_A = 0.0, ph2_jwl_B = 0.0, ph2_jwl_R1 = 0.0, ph2_jwl_R2 = 0.0;
+    Real ph2_jwl_omega = 0.0, ph2_jwl_rho0 = 1.0;
 };
 
 struct TurbulenceConfig {

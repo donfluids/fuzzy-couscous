@@ -62,6 +62,13 @@ struct RhsScratch {
     // pressure oscillations across strong contacts. Set per step by RK3.
     bool    mf_conservative = false;
 
+    // Five-equation mode: per-direction cell-centered aux fluxes (Z1*u_d,
+    // Z2*u_d, alpha1*u_d) and the face-velocity field u_d for the volume-fraction
+    // source. Allocated lazily on first use so other modes pay nothing.
+    Field3D fZ1, fZ2, fa1, vel_d;
+    bool    five_eq_allocated = false;
+    void    allocate_5eq(int nx, int ny, int nz, int ng);
+
     // Hyperdissipation. `lap` holds the first composed Laplacian; `lap2`
     // is the second intermediate for the nabla^6 path and is unused when
     // hyper6_coeff == 0.

@@ -183,6 +183,101 @@ void mf_pressure_minmax(const State& U, const Field3D& G, Real& pmin, Real& pmax
             }
 }
 
+void mf_init_5eq(State& U, FiveEqAux& aux, const Grid& g,
+                 const MultifluidParams& mp) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    const MixtureEOS mix = mp.mixture();
+    const Real delta = (mp.tanh_thickness > 0 ? mp.tanh_thickness : 3.0 * g.dx());
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const Real x = g.xc(i), y = g.yc(j), z = g.zc(k);
+                const Real r = std::sqrt(x*x + y*y + z*z);
+                const Real r0e = mp.r0 * (1.0 + mp.Y42_amp * Y42(x, y, z));
+                const Real w = 0.5 * (1.0 + std::tanh((r0e - r) / delta));  // 1 inside
+                Real a1 = mp.a1_out + (mp.a1_in - mp.a1_out) * w;
+                a1 = std::min(std::max(a1, mix.a_floor), 1.0 - mix.a_floor);
+                const Real Z1 = a1 * mp.rho1;
+                const Real Z2 = (1.0 - a1) * mp.rho2;
+                const Real rho = Z1 + Z2;
+                const Real p = mp.p_out + (mp.p_in - mp.p_out) * w;
+                const Real rhoe = mix.five_eq_rhoe_from_p(a1, Z1, Z2, p);
+                const Real ke = 0.5 * rho * (mp.u0*mp.u0 + mp.v0*mp.v0 + mp.w0*mp.w0);
+                U[RHO](i,j,k)  = rho;
+                U[RHOU](i,j,k) = rho * mp.u0;
+                U[RHOV](i,j,k) = rho * mp.v0;
+                U[RHOW](i,j,k) = rho * mp.w0;
+                U[RHOE](i,j,k) = rhoe + ke;
+                aux.Z1(i,j,k) = Z1;
+                aux.Z2(i,j,k) = Z2;
+                aux.a1(i,j,k) = a1;
+            }
+}
+
+void mf_fill_aux_bcs(FiveEqAux& aux, const BCSet& bc) {
+    mf_fill_G_bcs(aux.Z1, bc);
+    mf_fill_G_bcs(aux.Z2, bc);
+    mf_fill_G_bcs(aux.a1, bc);
+}
+
+namespace {
+// in-place out = a*x + b*y over the full padded field (interior + ghosts).
+void field_axpby(Field3D& out, Real a, const Field3D& x, Real b, const Field3D& y) {
+    const Index N = x.ldx() * (x.ny() + 2 * x.ng()) * (x.nz() + 2 * x.ng());
+    const Real* __restrict__ xp = x.raw();
+    const Real* __restrict__ yp = y.raw();
+    Real* __restrict__ op = out.raw();
+#pragma omp parallel for simd schedule(static)
+    for (Index i = 0; i < N; ++i) op[i] = a * xp[i] + b * yp[i];
+}
+void field_axpbypcz(Field3D& out, Real a, const Field3D& x, Real b,
+                    const Field3D& y, Real c, const Field3D& z) {
+    const Index N = x.ldx() * (x.ny() + 2 * x.ng()) * (x.nz() + 2 * x.ng());
+    const Real* __restrict__ xp = x.raw();
+    const Real* __restrict__ yp = y.raw();
+    const Real* __restrict__ zp = z.raw();
+    Real* __restrict__ op = out.raw();
+#pragma omp parallel for simd schedule(static)
+    for (Index i = 0; i < N; ++i) op[i] = a * xp[i] + b * yp[i] + c * zp[i];
+}
+}  // namespace
+
+void aux_axpby(FiveEqAux& out, Real a, const FiveEqAux& x, Real b,
+               const FiveEqAux& y) {
+    field_axpby(out.Z1, a, x.Z1, b, y.Z1);
+    field_axpby(out.Z2, a, x.Z2, b, y.Z2);
+    field_axpby(out.a1, a, x.a1, b, y.a1);
+}
+
+void aux_axpbypcz(FiveEqAux& out, Real a, const FiveEqAux& x, Real b,
+                  const FiveEqAux& y, Real c, const FiveEqAux& z) {
+    field_axpbypcz(out.Z1, a, x.Z1, b, y.Z1, c, z.Z1);
+    field_axpbypcz(out.Z2, a, x.Z2, b, y.Z2, c, z.Z2);
+    field_axpbypcz(out.a1, a, x.a1, b, y.a1, c, z.a1);
+}
+
+long enforce_5eq_bounds(State& U, FiveEqAux& aux, Real a_floor, Real z_floor) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    long nclamp = 0;
+#pragma omp parallel for collapse(2) schedule(static) reduction(+:nclamp)
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                Real a1 = aux.a1(i,j,k);
+                Real Z1 = aux.Z1(i,j,k);
+                Real Z2 = aux.Z2(i,j,k);
+                if (!(a1 >= a_floor))       { a1 = a_floor;       ++nclamp; }
+                if (!(a1 <= 1.0 - a_floor)) { a1 = 1.0 - a_floor; ++nclamp; }
+                if (!(Z1 >= z_floor))       { Z1 = z_floor;       ++nclamp; }
+                if (!(Z2 >= z_floor))       { Z2 = z_floor;       ++nclamp; }
+                aux.a1(i,j,k) = a1;
+                aux.Z1(i,j,k) = Z1;
+                aux.Z2(i,j,k) = Z2;
+                U[RHO](i,j,k) = Z1 + Z2;   // keep mixture mass consistent
+            }
+    return nclamp;
+}
+
 GStats mf_g_stats(const Field3D& G) {
     const int nx = G.nx(), ny = G.ny(), nz = G.nz();
     Real gmin = 1e300, gmax = -1e300, sum = 0.0, sum2 = 0.0;

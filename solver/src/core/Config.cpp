@@ -188,6 +188,35 @@ Config load_config(const std::string& path) {
     c.multifluid.rho_ref   = pick<double>(mf["rho_ref"],   c.multifluid.rho_ref);
     c.multifluid.p_ref     = pick<double>(mf["p_ref"],     c.multifluid.p_ref);
 
+    // Five-equation per-phase + IC parameters (eos = "five_equation").
+    c.multifluid.ph1_kind  = pick<std::string>(mf["ph1_kind"], c.multifluid.ph1_kind);
+    c.multifluid.ph2_kind  = pick<std::string>(mf["ph2_kind"], c.multifluid.ph2_kind);
+    c.multifluid.ph1_gamma = pick<double>(mf["ph1_gamma"], c.multifluid.ph1_gamma);
+    c.multifluid.ph1_pinf  = pick<double>(mf["ph1_pinf"],  c.multifluid.ph1_pinf);
+    c.multifluid.ph2_gamma = pick<double>(mf["ph2_gamma"], c.multifluid.ph2_gamma);
+    c.multifluid.ph2_pinf  = pick<double>(mf["ph2_pinf"],  c.multifluid.ph2_pinf);
+    c.multifluid.fe_a1_in  = pick<double>(mf["a1_in"],     c.multifluid.fe_a1_in);
+    c.multifluid.fe_a1_out = pick<double>(mf["a1_out"],    c.multifluid.fe_a1_out);
+    c.multifluid.fe_rho1   = pick<double>(mf["rho1"],      c.multifluid.fe_rho1);
+    c.multifluid.fe_rho2   = pick<double>(mf["rho2"],      c.multifluid.fe_rho2);
+    c.multifluid.fe_p_in   = pick<double>(mf["p_in"],      c.multifluid.fe_p_in);
+    c.multifluid.fe_p_out  = pick<double>(mf["p_out"],     c.multifluid.fe_p_out);
+    c.multifluid.fe_u0     = pick<double>(mf["u0"],        c.multifluid.fe_u0);
+    c.multifluid.fe_v0     = pick<double>(mf["v0"],        c.multifluid.fe_v0);
+    c.multifluid.fe_w0     = pick<double>(mf["w0"],        c.multifluid.fe_w0);
+    c.multifluid.ph1_jwl_A = pick<double>(mf["ph1_jwl_A"], c.multifluid.ph1_jwl_A);
+    c.multifluid.ph1_jwl_B = pick<double>(mf["ph1_jwl_B"], c.multifluid.ph1_jwl_B);
+    c.multifluid.ph1_jwl_R1 = pick<double>(mf["ph1_jwl_R1"], c.multifluid.ph1_jwl_R1);
+    c.multifluid.ph1_jwl_R2 = pick<double>(mf["ph1_jwl_R2"], c.multifluid.ph1_jwl_R2);
+    c.multifluid.ph1_jwl_omega = pick<double>(mf["ph1_jwl_omega"], c.multifluid.ph1_jwl_omega);
+    c.multifluid.ph1_jwl_rho0 = pick<double>(mf["ph1_jwl_rho0"], c.multifluid.ph1_jwl_rho0);
+    c.multifluid.ph2_jwl_A = pick<double>(mf["ph2_jwl_A"], c.multifluid.ph2_jwl_A);
+    c.multifluid.ph2_jwl_B = pick<double>(mf["ph2_jwl_B"], c.multifluid.ph2_jwl_B);
+    c.multifluid.ph2_jwl_R1 = pick<double>(mf["ph2_jwl_R1"], c.multifluid.ph2_jwl_R1);
+    c.multifluid.ph2_jwl_R2 = pick<double>(mf["ph2_jwl_R2"], c.multifluid.ph2_jwl_R2);
+    c.multifluid.ph2_jwl_omega = pick<double>(mf["ph2_jwl_omega"], c.multifluid.ph2_jwl_omega);
+    c.multifluid.ph2_jwl_rho0 = pick<double>(mf["ph2_jwl_rho0"], c.multifluid.ph2_jwl_rho0);
+
     auto o = tbl["output"];
     c.output.out_dir          = pick<std::string>(o["out_dir"], c.output.out_dir);
     c.output.snapshot_every   = pick<int64_t>(o["snapshot_every"], c.output.snapshot_every);

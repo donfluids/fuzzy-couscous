@@ -23,6 +23,9 @@ add_executable(unit_tests
     test_gaussian_blast.cpp
     test_compact.cpp
     test_jwl.cpp
+    test_five_eq_eos.cpp
+    test_five_eq_interface.cpp
+    test_five_eq_shock_bubble.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

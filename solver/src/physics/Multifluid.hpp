@@ -13,6 +13,25 @@
 
 namespace blast {
 
+// Auxiliary state for the true five-equation (Allaire-Kapila-Massoni) model.
+// These three fields live ALONGSIDE the NCONS=5 conserved State (which already
+// carries the mixture mass rho = Z1+Z2, momentum, and total energy):
+//   Z1 = alpha1 * rho1   (partial density, phase 1)  -- conservative
+//   Z2 = alpha2 * rho2   (partial density, phase 2)  -- conservative
+//   a1 = alpha1          (volume fraction)           -- non-conservative transport
+// They are advanced in lockstep with the State inside each RK3 stage (NOT
+// operator-split like the two-gamma marker G), because the partial-mass fluxes
+// must reuse the same stage velocity / reconstruction as the mixture-mass flux
+// so that Z1+Z2 == rho exactly.
+struct FiveEqAux {
+    Field3D Z1, Z2, a1;
+    void allocate(int nx, int ny, int nz, int ng = NGHOST) {
+        Z1.resize(nx, ny, nz, ng); Z1.set_name("Z1");
+        Z2.resize(nx, ny, nz, ng); Z2.set_name("Z2");
+        a1.resize(nx, ny, nz, ng); a1.set_name("alpha1");
+    }
+};
+
 // Two-gamma multifluid: a per-cell field G = 1/(gamma-1) carries the local fluid
 // identity (dense high-cv products vs light air). The inviscid flux reads local
 // gamma = 1 + 1/G (RHS.cpp); here we provide the IC, the contact advection of G,
@@ -48,11 +67,27 @@ struct MultifluidParams {
     Real      rho_cj = 0.0, p_cj = 0.0, p_a = 0.0;
     Real      phi_switch = 0.5;
 
+    // ---- Five-equation diffuse-interface mode -----------------------------
+    // Two phases, each a stiffened gas or a JWL EOS (see PhaseEOS). The IC is a
+    // tanh-blended bubble (radius r0, like the two-gamma blast): volume fraction
+    // a1 goes from a1_out (ambient) to a1_in (bubble), with phase densities
+    // rho1/rho2 and pressures p_out/p_in, optionally translating at (u0,v0,w0).
+    bool     five_eq_mode = false;
+    PhaseEOS ph[2];
+    Real     a1_in = 1.0 - 1e-6, a1_out = 1e-6;
+    Real     rho1 = 1.0, rho2 = 1.0;
+    Real     p_in = 1.0, p_out = 1.0;
+    Real     u0 = 0.0, v0 = 0.0, w0 = 0.0;
+
     // Build the matching mixture EOS for the flux/CFL loops.
     MixtureEOS mixture() const {
         MixtureEOS m;
         m.gamma_air = gamma_air;
-        if (jwl_mode) {
+        if (five_eq_mode) {
+            m.mode = MixMode::FiveEquation;
+            m.phase[0] = ph[0];
+            m.phase[1] = ph[1];
+        } else if (jwl_mode) {
             m.mode = MixMode::JWL;
             m.phi_switch = phi_switch;
             m.jwl = jwl;
@@ -104,5 +139,30 @@ GStats mf_g_stats(const Field3D& G);
 #ifdef BLAST_MPI
 GStats mf_g_stats(const Field3D& G, long long N_global, MPI_Comm comm);
 #endif
+
+// ---- Five-equation helpers ------------------------------------------------
+
+// Initialize the five-equation state: a tanh-blended bubble (volume fraction,
+// phase densities, pressure) consistent with the mixture EOS so the flux-loop
+// pressure matches the IC exactly. Sets U (rho=Z1+Z2, momentum, rhoE) and aux.
+void mf_init_5eq(State& U, FiveEqAux& aux, const Grid& g,
+                 const MultifluidParams& mp);
+
+// Fill ghost cells of all three aux fields (zero-gradient at walls/outflow,
+// wrap at periodic), reusing the marker BC rule. Call each RK stage so the
+// aux flux sees valid ghosts.
+void mf_fill_aux_bcs(FiveEqAux& aux, const BCSet& bc);
+
+// SSP-RK3 combiners for the aux bundle, mirroring state_axpby / state_axpbypcz
+// (interior + ghosts). out = a*x + b*y (+ c*z).
+void aux_axpby(FiveEqAux& out, Real a, const FiveEqAux& x, Real b,
+               const FiveEqAux& y);
+void aux_axpbypcz(FiveEqAux& out, Real a, const FiveEqAux& x, Real b,
+                  const FiveEqAux& y, Real c, const FiveEqAux& z);
+
+// Boundedness for the five-equation state (interior only): clamp 0<=a1<=1 with
+// a floor that keeps both phases present, clamp Z1,Z2 positive, and resync
+// U[RHO] = Z1+Z2 so the mixture mass stays consistent. Returns cells clamped.
+long enforce_5eq_bounds(State& U, FiveEqAux& aux, Real a_floor, Real z_floor);
 
 }  // namespace blast

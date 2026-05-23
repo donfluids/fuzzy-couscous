@@ -28,6 +28,15 @@ void RhsScratch::allocate(int nx, int ny, int nz, int ng) {
     lap2.resize(nx, ny, nz, ng);
 }
 
+void RhsScratch::allocate_5eq(int nx, int ny, int nz, int ng) {
+    if (five_eq_allocated) return;
+    fZ1.resize(nx, ny, nz, ng);
+    fZ2.resize(nx, ny, nz, ng);
+    fa1.resize(nx, ny, nz, ng);
+    vel_d.resize(nx, ny, nz, ng);
+    five_eq_allocated = true;
+}
+
 void RhsScratch::allocate_abv(int nx, int ny, int nz, int ng) {
     if (abv_allocated) return;
     lad_theta.resize(nx, ny, nz, ng);

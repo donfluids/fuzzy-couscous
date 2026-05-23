@@ -16,6 +16,7 @@ For the equations behind each capability, see
 |---|---|---|
 | Single-fluid compressible NS | ideal-gas blasts, TGV, forced HIT | `physics/EulerFlux.hpp`, `physics/ViscousFlux.hpp` |
 | Two-γ multifluid | variable-density contact (air + products) | `physics/Multifluid.{hpp,cpp}` |
+| Five-equation diffuse interface | true two-phase (Allaire–Kapila): per-phase EOS, partial densities + volume fraction | `physics/StiffenedGas.hpp`, `physics/MixtureEOS.hpp`, `numerics/RHS.cpp` |
 | JWL real explosives | TNT detonation products (non-ideal EOS) | `physics/JWL.hpp`, `physics/MixtureEOS.hpp` |
 | CJ detonation IC | Chapman–Jouguet initial state (Williams relations) | `ic/Canonical.cpp` |
 | BHR variable-density turbulence | k–ε–a–b model, one- or two-way coupled | `turbulence/BHR.{hpp,cpp}` |
@@ -35,6 +36,14 @@ Ideal gas; a marker-selected mixture for blasts — **two-γ** (`G = 1/(γ−1)`
 **JWL** (TNT, run nondimensionally). One dispatcher
 (`physics/MixtureEOS.hpp`) serves the EOS-agnostic flux. See
 [`equations/governing-equations.pdf`](equations/governing-equations.pdf) §4.
+
+For genuine two-phase flow there is also a **five-equation diffuse-interface
+model** (Allaire–Kapila–Massoni): two partial-mass equations + mixture momentum
+& energy + a non-conservative volume-fraction transport, with a per-phase
+**stiffened-gas** (ideal = `p∞ 0`) or **JWL** EOS combined by the
+volume-fraction-averaged Wood rule. Selected with `multifluid.eos =
+"five_equation"`. An isolated material interface stays oscillation-free to
+round-off (validated by `tests/test_five_eq_interface.cpp`).
 
 ## Diagnostics (the paper-revision deliverable)
 

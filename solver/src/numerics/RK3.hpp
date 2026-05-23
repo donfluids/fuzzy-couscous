@@ -6,6 +6,7 @@
 #include "numerics/RhsScratch.hpp"
 #include "physics/EOS.hpp"
 #include "physics/MixtureEOS.hpp"
+#include "physics/Multifluid.hpp"
 #include "physics/ViscousFlux.hpp"
 
 #ifdef BLAST_MPI
@@ -52,6 +53,14 @@ public:
                           const IdealGas& eos, const ViscousParams& vp,
                           Real dt, Real t_current, const SourceCallback& src);
 
+    // True five-equation step: advances the conserved State and the aux bundle
+    // (Z1, Z2, alpha1) in lockstep through all 3 SSP-RK3 stages, so the
+    // partial-mass fluxes see the same stage velocity as the mixture flux.
+    // Applies positivity + volume-fraction boundedness after each stage.
+    void step_5eq(State& U, FiveEqAux& aux, const Grid& g, const BCSet& bc,
+                  const IdealGas& eos, const ViscousParams& vp, Real dt,
+                  const MixtureEOS& mix);
+
 #ifdef BLAST_MPI
     // MPI variant: halo-exchange before applying physical BCs at each stage.
     // The Halo object must outlive this RK3.
@@ -74,6 +83,9 @@ private:
     State       U1_;
     State       k_;
     RhsScratch  scratch_;
+    FiveEqAux   aux1_;             // five-equation: stage state (lazy-allocated)
+    FiveEqAux   kaux_;             // five-equation: aux RHS accumulator
+    bool        aux_allocated_ = false;
 };
 
 }  // namespace blast

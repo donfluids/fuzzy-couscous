@@ -1,0 +1,73 @@
+# 64^3 FIVE-EQUATION diffuse-interface demo: a denser stiffened-gas bubble
+# (phase 1) embedded in ambient gas (phase 0), translating in +x at uniform
+# pressure and velocity. A correctly designed five-equation scheme keeps the
+# pressure and velocity uniform as the contact advects (no spurious oscillation);
+# see tests/test_five_eq_interface.cpp for the quantitative round-off check.
+run_name = "five_eq_bubble_64"
+
+[grid]
+nx = 64
+ny = 64
+nz = 64
+lx = 1.0
+ly = 1.0
+lz = 1.0
+x0 = -0.5
+y0 = -0.5
+z0 = -0.5
+
+[bc]
+xlo = "periodic"
+xhi = "periodic"
+ylo = "periodic"
+yhi = "periodic"
+zlo = "periodic"
+zhi = "periodic"
+
+[ic]
+r0             = 0.15
+Y42_amp        = 0.0
+tanh_thickness = 0.03          # resolved interface (~2 dx)
+
+[multifluid]
+enabled = true
+eos     = "five_equation"
+# Phase 0 = ambient gas (ideal, p_inf = 0); phase 1 = denser stiffened gas.
+ph1_kind  = "stiffened_gas"
+ph1_gamma = 1.4
+ph1_pinf  = 0.0
+ph2_kind  = "stiffened_gas"
+ph2_gamma = 4.4
+ph2_pinf  = 6.0
+# Bubble of phase 1 (a1_in ~ 0) inside ambient phase 0 (a1_out ~ 1).
+a1_in  = 1.0e-6
+a1_out = 0.999999
+rho1   = 1.0                   # phase-0 density
+rho2   = 100.0                 # phase-1 density
+p_in   = 5.0                   # uniform pressure (must be uniform for the demo)
+p_out  = 5.0
+u0     = 1.0                   # uniform translation in +x
+v0     = 0.0
+w0     = 0.0
+
+[physics]
+gamma        = 1.4
+R            = 1.0
+mu           = 0.0
+hyper_coeff  = 0.0
+hyper6_coeff = 0.0
+
+[time]
+cfl_hyperbolic = 0.4
+t_end          = 0.3
+dt_max         = 1.0
+max_steps      = 100000
+
+[filter]
+enabled = false
+
+[output]
+out_dir       = "runs/five_eq/out_five_eq_bubble_64"
+stats_dt      = 0.02
+snapshot_dt   = 0.05
+write_spectra = false

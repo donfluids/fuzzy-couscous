@@ -14,6 +14,7 @@
 namespace blast {
 
 struct RhsScratch;  // numerics/RhsScratch.hpp
+struct FiveEqAux;   // physics/Multifluid.hpp
 
 // Computes L(U) = -div F  (inviscid, ideal-gas). Writes into Rhs.
 // Ghost cells of U must be populated by caller (apply_bcs before each call).
@@ -27,13 +28,21 @@ struct RhsScratch;  // numerics/RhsScratch.hpp
 // existing behavior).
 // mix (optional): marker-selected mixture EOS (TwoGamma or air+JWL). nullptr
 // with a non-null gfn keeps the original two-gamma arithmetic (gloc = 1 + 1/G).
+// aux5/auxRhs (optional): the five-equation aux bundle (Z1,Z2,alpha1) and its
+// RHS accumulator. When mix->mode == FiveEquation and both are non-null, the
+// true five-equation path runs (conservative momentum/energy + derived mixture
+// mass + non-conservative volume fraction); auxRhs is overwritten.
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
                           State& Rhs, const Field3D* gfn = nullptr,
-                          const MixtureEOS* mix = nullptr);
+                          const MixtureEOS* mix = nullptr,
+                          const FiveEqAux* aux5 = nullptr,
+                          FiveEqAux* auxRhs = nullptr);
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
                           RhsScratch& scratch, State& Rhs,
                           const Field3D* gfn = nullptr,
-                          const MixtureEOS* mix = nullptr);
+                          const MixtureEOS* mix = nullptr,
+                          const FiveEqAux* aux5 = nullptr,
+                          FiveEqAux* auxRhs = nullptr);
 
 // Adds viscous contribution + div(tau u - q) to existing Rhs in-place.
 // Caller has called apply_bcs and (if needed) compute_rhs_inviscid first.
@@ -45,7 +54,8 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
 // Returns the global maximum stable timestep for the hyperbolic CFL.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                        Real cfl, const Field3D* gfn = nullptr,
-                       const MixtureEOS* mix = nullptr);
+                       const MixtureEOS* mix = nullptr,
+                       const FiveEqAux* aux5 = nullptr);
 
 // Returns the global maximum stable timestep for the viscous CFL,
 // dt = cfl * dx^2 / nu where nu = mu/rho_min.

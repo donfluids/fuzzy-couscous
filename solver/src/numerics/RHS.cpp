@@ -11,6 +11,7 @@
 #include "numerics/WENO5.hpp"
 #include "physics/EOS.hpp"
 #include "physics/EulerFlux.hpp"
+#include "physics/Multifluid.hpp"
 #include "physics/ViscousFlux.hpp"
 
 #include <algorithm>
@@ -410,12 +411,119 @@ void add_face_flux_divergence_compact(const State& U, const State& Flux,
     }
 }
 
+// Five-equation cell-centered fluxes: the conserved Euler flux (with the
+// volume-fraction-averaged mixture pressure) plus the advective aux fluxes
+// (Z1*u_d, Z2*u_d, alpha1*u_d) and the velocity field u_d (for the
+// volume-fraction source). alpha = |u_d| + c uses the frozen mixture sound speed.
+void fill_flux_alpha_5eq(const State& U, const FiveEqAux& aux, int d,
+                         State& Flux, Field3D& alpha, Field3D& fZ1, Field3D& fZ2,
+                         Field3D& fa1, Field3D& vel, const MixtureEOS& mix) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+    const auto& E   = U[RHOE];
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = -ng; k < nz + ng; ++k)
+        for (int j = -ng; j < ny + ng; ++j)
+            for (int i = -ng; i < nx + ng; ++i) {
+                ConsCell C{rho(i,j,k), mx(i,j,k), my(i,j,k), mz(i,j,k), E(i,j,k)};
+                const Real inv_rho = 1.0 / C.rho;
+                const Real u = C.mx * inv_rho, v = C.my * inv_rho, w = C.mz * inv_rho;
+                const Real ke = 0.5 * C.rho * (u*u + v*v + w*w);
+                const Real Z1 = aux.Z1(i,j,k), Z2 = aux.Z2(i,j,k), a1 = aux.a1(i,j,k);
+                Real p, c;
+                mix.p_c_5eq(a1, Z1, Z2, C.rho, C.rhoE - ke, p, c);
+                const Real ud = (d == 0 ? u : d == 1 ? v : w);
+                FluxVec F = euler_flux(C, p, d);
+                Flux[RHO](i,j,k)  = F.f[RHO];
+                Flux[RHOU](i,j,k) = F.f[RHOU];
+                Flux[RHOV](i,j,k) = F.f[RHOV];
+                Flux[RHOW](i,j,k) = F.f[RHOW];
+                Flux[RHOE](i,j,k) = F.f[RHOE];
+                fZ1(i,j,k) = Z1 * ud;
+                fZ2(i,j,k) = Z2 * ud;
+                fa1(i,j,k) = a1 * ud;
+                vel(i,j,k) = ud;
+                alpha(i,j,k) = std::fabs(ud) + c;
+            }
+}
+
+// Five-equation inviscid divergence. Momentum and energy use the standard
+// conservative face flux; the mixture mass is DERIVED as rho = Z1+Z2 (its RHS is
+// the sum of the two partial-mass divergences) so Z1+Z2 == rho exactly. The
+// volume fraction is non-conservative: d a1/dt = -div(a1 u) + a1 div(u). Every
+// quantity shares the same alpha/sensor, so for stiffened-gas phases a uniform
+// (p,u) interface stays oscillation-free to round-off (S, Pi are linear in a1).
+void add_inviscid_divergence_5eq(const State& U, const State& Flux,
+                                 const FiveEqAux& aux, const Field3D& fZ1,
+                                 const Field3D& fZ2, const Field3D& fa1,
+                                 const Field3D& vel, const Field3D& alpha,
+                                 const Field3D& theta, int d, Real inv_dh,
+                                 State& Rhs, FiveEqAux& auxRhs) {
+    const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
+    const int di = (d == 0), dj = (d == 1), dk = (d == 2);
+    const Index s = stride_for(d, Flux[RHO]);
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const int im = i - di, jm = j - dj, km = k - dk;
+                const int ip = i + di, jp = j + dj, kp = k + dk;
+                const Real th_lo = std::max(theta(im,jm,km), theta(i,j,k));
+                const Real th_hi = std::max(theta(i,j,k),    theta(ip,jp,kp));
+                const bool weno_lo = th_lo > kSensorThreshold;
+                const bool weno_hi = th_hi > kSensorThreshold;
+                const Real alpha_lo = std::max(alpha(im,jm,km), alpha(i,j,k));
+                const Real alpha_hi = std::max(alpha(i,j,k),    alpha(ip,jp,kp));
+
+                // Momentum + energy: standard conservative divergence.
+                for (int v = RHOU; v <= RHOE; ++v) {
+                    const Field3D& F = Flux[v];
+                    const Field3D& Q = U[v];
+                    const Real Fhi = face_flux(&F(i,j,k),   &Q(i,j,k),   alpha_hi, s, weno_hi);
+                    const Real Flo = face_flux(&F(im,jm,km),&Q(im,jm,km),alpha_lo, s, weno_lo);
+                    Rhs[v](i,j,k) -= (Fhi - Flo) * inv_dh;
+                }
+
+                // Partial masses (conservative); mixture mass derived from them.
+                const Real dZ1 = -(face_flux(&fZ1(i,j,k),   &aux.Z1(i,j,k),   alpha_hi, s, weno_hi)
+                                 - face_flux(&fZ1(im,jm,km),&aux.Z1(im,jm,km),alpha_lo, s, weno_lo)) * inv_dh;
+                const Real dZ2 = -(face_flux(&fZ2(i,j,k),   &aux.Z2(i,j,k),   alpha_hi, s, weno_hi)
+                                 - face_flux(&fZ2(im,jm,km),&aux.Z2(im,jm,km),alpha_lo, s, weno_lo)) * inv_dh;
+                auxRhs.Z1(i,j,k) += dZ1;
+                auxRhs.Z2(i,j,k) += dZ2;
+                Rhs[RHO](i,j,k) += dZ1 + dZ2;
+
+                // Volume fraction (non-conservative): -div(a1 u) + a1 div(u).
+                const Real dfa1 = -(face_flux(&fa1(i,j,k),   &aux.a1(i,j,k),   alpha_hi, s, weno_hi)
+                                  - face_flux(&fa1(im,jm,km),&aux.a1(im,jm,km),alpha_lo, s, weno_lo)) * inv_dh;
+                const Real uf_hi = face_flux(&vel(i,j,k),    &vel(i,j,k),    0.0, s, weno_hi);
+                const Real uf_lo = face_flux(&vel(im,jm,km), &vel(im,jm,km), 0.0, s, weno_lo);
+                const Real src = aux.a1(i,j,k) * (uf_hi - uf_lo) * inv_dh;
+                auxRhs.a1(i,j,k) += dfa1 + src;
+            }
+}
+
 }  // namespace
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
                           RhsScratch& scratch, State& Rhs, const Field3D* gfn,
-                          const MixtureEOS* mix) {
+                          const MixtureEOS* mix, const FiveEqAux* aux5,
+                          FiveEqAux* auxRhs) {
     for (int v = 0; v < NCONS; ++v) Rhs.fill(v, 0.0);
+
+    const bool five_eq =
+        (mix && mix->mode == MixMode::FiveEquation && aux5 && auxRhs);
+    if (five_eq) {
+        scratch.allocate_5eq(U.nx(), U.ny(), U.nz(), U.ng());
+        auxRhs->Z1.fill(0.0);
+        auxRhs->Z2.fill(0.0);
+        auxRhs->a1.fill(0.0);
+    }
 
     Field3D& theta     = scratch.theta;
     Field3D& alpha     = scratch.alpha;
@@ -423,7 +531,7 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
     Field3D& dil_tmp   = scratch.dilate_tmp;
     State&   Flux      = scratch.Flux_inv;
 
-    compute_sensor(U, g, eos, theta, gfn, mix);
+    compute_sensor(U, g, eos, theta, gfn, mix, aux5);
 
     // LAD-only mode: suppress the Ducros/WENO sensor so the central scheme runs
     // everywhere and localized artificial diffusivity is the sole shock sink.
@@ -436,7 +544,7 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
     // RELATIVE jump of G = 1/(gamma-1); JWL uses an ABSOLUTE jump of the mass
     // fraction phi (phi_air = 0 makes a relative test ill-posed).
     Field3D& contact = scratch.contact;
-    if (gfn) {
+    if (gfn && !five_eq) {
         const bool jwl_marker = (mix && mix->mode == MixMode::JWL);
         const Field3D& G = *gfn;
         const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
@@ -475,6 +583,17 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
         for (Index i = 0; i < N; ++i) theta_dil.raw()[i] = theta.raw()[i];
         dilate_sensor_along(theta_dil, dil_tmp, d);
 
+        if (five_eq) {
+            // True five-equation model: conservative momentum/energy + derived
+            // mixture mass + non-conservative volume fraction, all sharing the
+            // same alpha/sensor for an oscillation-free interface.
+            fill_flux_alpha_5eq(U, *aux5, d, Flux, alpha, scratch.fZ1,
+                                scratch.fZ2, scratch.fa1, scratch.vel_d, *mix);
+            add_inviscid_divergence_5eq(U, Flux, *aux5, scratch.fZ1, scratch.fZ2,
+                                        scratch.fa1, scratch.vel_d, alpha,
+                                        theta_dil, d, inv_h, Rhs, *auxRhs);
+            return;
+        }
         fill_flux_and_alpha(U, d, eos, Flux, alpha, gfn, mix);
         if (gfn && !scratch.mf_conservative) {
             // Multifluid: gated double-flux. Fast shared conservative flux in
@@ -503,17 +622,19 @@ void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
 }
 
 void compute_rhs_inviscid(const State& U, const Grid& g, const IdealGas& eos,
-                          State& Rhs, const Field3D* gfn, const MixtureEOS* mix) {
+                          State& Rhs, const Field3D* gfn, const MixtureEOS* mix,
+                          const FiveEqAux* aux5, FiveEqAux* auxRhs) {
     // Standalone path used by tests / ad-hoc callers. Allocates scratch
     // once on the stack; production runs go through the RhsScratch
     // overload via RK3.
     RhsScratch s;
     s.allocate(U.nx(), U.ny(), U.nz(), U.ng());
-    compute_rhs_inviscid(U, g, eos, s, Rhs, gfn, mix);
+    compute_rhs_inviscid(U, g, eos, s, Rhs, gfn, mix, aux5, auxRhs);
 }
 
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
-                       Real cfl, const Field3D* gfn, const MixtureEOS* mix) {
+                       Real cfl, const Field3D* gfn, const MixtureEOS* mix,
+                       const FiveEqAux* aux5) {
     const int nx = U.nx(), ny = U.ny(), nz = U.nz();
     const auto& rho = U[RHO];
     const auto& mx  = U[RHOU];
@@ -521,6 +642,7 @@ Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
     const auto& mz  = U[RHOW];
     const auto& E   = U[RHOE];
     const Real dx = g.dx(), dy = g.dy(), dz = g.dz();
+    const bool five_eq = (mix && mix->mode == MixMode::FiveEquation && aux5);
 
     Real max_inv_dt = 0.0;
 #pragma omp parallel for collapse(2) schedule(static) reduction(max:max_inv_dt)
@@ -533,7 +655,10 @@ Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                 const Real iw = mz(i,j,k) / r;
                 const Real ke = 0.5 * r * (iu*iu + iv*iv + iw*iw);
                 Real p, c;
-                if (mix && gfn) {
+                if (five_eq) {
+                    mix->p_c_5eq(aux5->a1(i,j,k), aux5->Z1(i,j,k), aux5->Z2(i,j,k),
+                                 r, E(i,j,k) - ke, p, c);
+                } else if (mix && gfn) {
                     mix->p_c((*gfn)(i,j,k), r, E(i,j,k) - ke, p, c);
                 } else {
                     const Real gloc = gfn ? (1.0 + 1.0 / (*gfn)(i,j,k)) : eos.eos.gamma;

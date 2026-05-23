@@ -1,5 +1,7 @@
 #include "numerics/Ducros.hpp"
 
+#include "physics/Multifluid.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <omp.h>
@@ -28,11 +30,15 @@ inline Real pressure_at(const State& U, const IdealGas& eos, int i, int j, int k
 }  // namespace
 
 void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
-                    Field3D& theta, const Field3D* gfn, const MixtureEOS* mix) {
+                    Field3D& theta, const Field3D* gfn, const MixtureEOS* mix,
+                    const FiveEqAux* aux5) {
     // JWL products pressure is not (gamma-1) e_int, so a JWL multifluid must use
     // the local EOS for the pressure-jump / sound-speed terms. Two-gamma and
     // single-fluid keep the reference-gamma path (bit-identical to before).
     const bool use_mix = (mix && gfn && mix->mode == MixMode::JWL);
+    // Five-equation: use the mixture pressure so a uniform-pressure contact (with
+    // a jump in alpha/density, hence in e_int) is NOT flagged as a shock.
+    const bool use_5eq = (mix && aux5 && mix->mode == MixMode::FiveEquation);
     const int nx = g.nx, ny = g.ny, nz = g.nz;
     const Real inv_2dx = 1.0 / (2.0 * g.dx());
     const Real inv_2dy = (ny > 1) ? 1.0 / (2.0 * g.dy()) : 0.0;
@@ -64,12 +70,16 @@ void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
     // Pressure at a cell, EOS-aware. Non-mix path is bit-identical to the
     // free pressure_at() helper above.
     auto p_at = [&](int i, int j, int k) -> Real {
-        if (!use_mix) return pressure_at(U, eos, i, j, k);
+        if (!use_mix && !use_5eq) return pressure_at(U, eos, i, j, k);
         const Real r = rho(i, j, k);
         const Real u = mx(i, j, k) / r, v = my(i, j, k) / r, w = mz(i, j, k) / r;
         const Real ke = 0.5 * r * (u * u + v * v + w * w);
         Real p, c;
-        mix->p_c((*gfn)(i, j, k), r, U[RHOE](i, j, k) - ke, p, c);
+        if (use_5eq)
+            mix->p_c_5eq(aux5->a1(i,j,k), aux5->Z1(i,j,k), aux5->Z2(i,j,k),
+                         r, U[RHOE](i, j, k) - ke, p, c);
+        else
+            mix->p_c((*gfn)(i, j, k), r, U[RHOE](i, j, k) - ke, p, c);
         return p;
     };
 
@@ -110,9 +120,20 @@ void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
                 const Real om2 = ox * ox + oy * oy + oz * oz;
                 const Real div2 = div * div;
                 const Real pc_local = p_at(i, j, k);
-                const Real c_local  = use_mix
-                    ? mix->sound_speed((*gfn)(i, j, k), rho(i, j, k), pc_local)
-                    : eos.sound_speed(rho(i, j, k), pc_local);
+                Real c_local;
+                if (use_5eq) {
+                    const Real r = rho(i,j,k);
+                    const Real uu = mx(i,j,k)/r, vv = my(i,j,k)/r, ww = mz(i,j,k)/r;
+                    const Real ke = 0.5 * r * (uu*uu + vv*vv + ww*ww);
+                    Real pp, cc;
+                    mix->p_c_5eq(aux5->a1(i,j,k), aux5->Z1(i,j,k), aux5->Z2(i,j,k),
+                                 r, U[RHOE](i,j,k) - ke, pp, cc);
+                    c_local = cc;
+                } else if (use_mix) {
+                    c_local = mix->sound_speed((*gfn)(i, j, k), rho(i, j, k), pc_local);
+                } else {
+                    c_local = eos.sound_speed(rho(i, j, k), pc_local);
+                }
                 const Real eps_floor = EPS_REL * (c_local / dx_min) * (c_local / dx_min);
                 const Real phi_v = div2 / (div2 + om2 + eps_floor);
 

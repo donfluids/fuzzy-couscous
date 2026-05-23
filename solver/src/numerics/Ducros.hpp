@@ -8,6 +8,8 @@
 
 namespace blast {
 
+struct FiveEqAux;   // physics/Multifluid.hpp
+
 // Composite shock sensor:
 //   theta = max( Ducros_velocity, pressure_jump )
 //
@@ -25,8 +27,12 @@ namespace blast {
 // be computed from the air gamma, so the indicator uses the local mixture EOS.
 // Single-fluid and two-gamma runs (mix == nullptr, or TwoGamma mode) keep the
 // reference-gamma path bit-identical.
+// aux5 (optional): the five-equation aux bundle; when mix->mode == FiveEquation
+// the pressure-jump and sound-speed terms use the mixture pressure so a
+// uniform-pressure interface produces no spurious jump (no WENO at contacts).
 void compute_sensor(const State& U, const Grid& g, const IdealGas& eos,
                     Field3D& theta, const Field3D* gfn = nullptr,
-                    const MixtureEOS* mix = nullptr);
+                    const MixtureEOS* mix = nullptr,
+                    const FiveEqAux* aux5 = nullptr);
 
 }  // namespace blast

@@ -192,6 +192,8 @@ int main(int argc, char** argv) {
     const Field3D* gptr = nullptr;
     MixtureEOS mixEOS;
     const MixtureEOS* mixptr = nullptr;   // JWL only; two-gamma keeps the legacy path
+    FiveEqAux aux;                        // five-equation aux bundle (Z1,Z2,alpha1)
+    bool five_eq = false;
     if (c.multifluid.enabled) {
         MultifluidParams mp;
         mp.enabled = true;
@@ -203,6 +205,50 @@ int main(int argc, char** argv) {
         mp.q = c.multifluid.q; mp.rho_e = c.multifluid.rho_e; mp.T_e = c.multifluid.T_e;
         mp.cj_u_frac = c.multifluid.cj_u_frac;
         mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
+        if (c.multifluid.eos == "five_equation") {
+            auto set_phase = [](PhaseEOS& ph, const std::string& kind, Real gamma,
+                                Real pinf, Real A, Real B, Real R1, Real R2,
+                                Real omega, Real rho0) {
+                if (kind == "jwl") {
+                    ph.kind = PhaseEOS::JWLPhase;
+                    ph.jwl.A = A; ph.jwl.B = B; ph.jwl.R1 = R1; ph.jwl.R2 = R2;
+                    ph.jwl.omega = omega; ph.jwl.rho0 = rho0;
+                } else {
+                    ph.kind = PhaseEOS::StiffenedGas;
+                    ph.sg.gamma = gamma; ph.sg.pinf = pinf;
+                }
+            };
+            mp.five_eq_mode = true;
+            set_phase(mp.ph[0], c.multifluid.ph1_kind, c.multifluid.ph1_gamma,
+                      c.multifluid.ph1_pinf, c.multifluid.ph1_jwl_A,
+                      c.multifluid.ph1_jwl_B, c.multifluid.ph1_jwl_R1,
+                      c.multifluid.ph1_jwl_R2, c.multifluid.ph1_jwl_omega,
+                      c.multifluid.ph1_jwl_rho0);
+            set_phase(mp.ph[1], c.multifluid.ph2_kind, c.multifluid.ph2_gamma,
+                      c.multifluid.ph2_pinf, c.multifluid.ph2_jwl_A,
+                      c.multifluid.ph2_jwl_B, c.multifluid.ph2_jwl_R1,
+                      c.multifluid.ph2_jwl_R2, c.multifluid.ph2_jwl_omega,
+                      c.multifluid.ph2_jwl_rho0);
+            mp.a1_in = c.multifluid.fe_a1_in; mp.a1_out = c.multifluid.fe_a1_out;
+            mp.rho1  = c.multifluid.fe_rho1;  mp.rho2   = c.multifluid.fe_rho2;
+            mp.p_in  = c.multifluid.fe_p_in;  mp.p_out  = c.multifluid.fe_p_out;
+            mp.u0 = c.multifluid.fe_u0; mp.v0 = c.multifluid.fe_v0; mp.w0 = c.multifluid.fe_w0;
+            aux.allocate(c.grid.nx, c.grid.ny, c.grid.nz, U.ng());
+            mf_init_5eq(U, aux, c.grid, mp);
+            mf_fill_aux_bcs(aux, bc);
+            apply_bcs(U, bc);
+            mixEOS = mp.mixture();
+            mixptr = &mixEOS;
+            gptr   = &aux.a1;
+            five_eq = true;
+            vp.rho_floor  = 1e-12;
+            vp.eint_floor = 1e-12;
+            BLAST_INFO("multifluid ON (five-equation): phase0={} phase1={} "
+                       "a1 in/out={}/{} rho1/rho2={}/{} p in/out={}/{}",
+                       c.multifluid.ph1_kind, c.multifluid.ph2_kind,
+                       mp.a1_in, mp.a1_out, mp.rho1, mp.rho2, mp.p_in, mp.p_out);
+        }
+        if (!five_eq) {
         if (c.multifluid.eos == "jwl") {
             // Nondimensionalize the SI JWL constants + CJ/ambient states so the
             // solver sees O(1) products (rho_ref/p_ref default to 1.0 = no-op).
@@ -242,6 +288,7 @@ int main(int argc, char** argv) {
                        "vs air gamma={} rho={}",
                        mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
         }
+        }  // end if(!five_eq)
     }
 
     // BHR variable-density turbulence model (operator-split sub-step).
@@ -347,13 +394,15 @@ int main(int argc, char** argv) {
     Real t = start_time;
     int step = start_step;
     write_diagnostics(step, t, 0.0, /*do_spectra=*/true);
-    writer.write_snapshot(U, c.grid, eos, t, step, gptr, mixptr);
+    writer.write_snapshot(U, c.grid, eos, t, step,
+                          five_eq ? nullptr : gptr, five_eq ? nullptr : mixptr);
 
     const std::string ckpt_path =
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
-        Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic, gptr, mixptr);
+        Real dt_hyp = max_dt_hyperbolic(U, c.grid, eos, c.time.cfl_hyperbolic, gptr,
+                                        mixptr, five_eq ? &aux : nullptr);
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, c.grid, vp, c.time.cfl_viscous)
                     : 1e30;
@@ -380,8 +429,12 @@ int main(int argc, char** argv) {
             break;
         }
 
-        driver.step(U, c.grid, bc, eos, vp, dt, gptr, mixptr);
-        if (gptr) mf_advect_G(Gfield, U, c.grid, bc, dt);
+        if (five_eq) {
+            driver.step_5eq(U, aux, c.grid, bc, eos, vp, dt, *mixptr);
+        } else {
+            driver.step(U, c.grid, bc, eos, vp, dt, gptr, mixptr);
+            if (gptr) mf_advect_G(Gfield, U, c.grid, bc, dt);
+        }
         if (forcing) {
             forcing->evolve_ou(dt);
             forcing->apply(U, c.grid, dt);
@@ -394,7 +447,7 @@ int main(int argc, char** argv) {
         t += dt;
         ++step;
 
-        if (c.filter.enabled && c.filter.every > 0
+        if (c.filter.enabled && !five_eq && c.filter.every > 0
             && step % c.filter.every == 0) {
             apply_lele_filter(U, bc, c.filter.sigma);
         }
@@ -412,7 +465,7 @@ int main(int argc, char** argv) {
                 BLAST_INFO("  BHR <rho k>={:.3e} k_pk={:.3e} |a|_pk={:.3e} b_pk={:.3e}",
                            bhr_tke_integral(U, turb, c.grid), kmx, amx, bmx);
             }
-            if (do_stats && gptr) {
+            if (do_stats && gptr && !five_eq) {
                 Real pmn, pmx;
                 mf_pressure_minmax(U, Gfield, pmn, pmx, mixptr);
                 const GStats gs = mf_g_stats(Gfield);
@@ -420,9 +473,15 @@ int main(int argc, char** argv) {
                            "G in [{:.4f}, {:.4f}] var={:.3e}",
                            pmn, pmx, gs.gmin, gs.gmax, gs.gvar);
             }
+            if (do_stats && five_eq) {
+                const GStats as = mf_g_stats(aux.a1);
+                BLAST_INFO("  five-eq alpha1 in [{:.4f}, {:.4f}] var={:.3e}",
+                           as.gmin, as.gmax, as.gvar);
+            }
         }
         if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every)) {
-            writer.write_snapshot(U, c.grid, eos, t, step, gptr, mixptr);
+            writer.write_snapshot(U, c.grid, eos, t, step,
+                                  five_eq ? nullptr : gptr, five_eq ? nullptr : mixptr);
             if (bp.enabled) {
                 bhr_write_radial_profiles(U, turb, c.grid,
                     c.output.out_dir + "/" + c.run_name + "_bhrprof_"

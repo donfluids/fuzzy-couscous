@@ -43,8 +43,6 @@ code/test pointer to be picked up later. Dates are absolute.
 ## Diagnostics & community delivery
 
 - **Reorg follow-ups (from the 2026-05-23 reorganization):**
-  - Prune the merged branches `abv-artificial-diffusivity` and
-    `spectra-energy-vs-turbulence` once the reorg stack lands.
   - Consider folding `data/` (derived `.npz`) into a `runs/_derived/` location;
     kept at repo root for now to limit blast radius.
   - Dedupe the redundant `import sys` / `from pathlib import Path` left in some

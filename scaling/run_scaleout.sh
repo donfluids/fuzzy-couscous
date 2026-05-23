@@ -10,8 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN="$REPO_DIR/solver/build_mpi/blast_les_mpi"
 CFG="$REPO_DIR/solver/examples/scaling_case1_256.toml"
-RUN_ROOT="$SCRIPT_DIR/runs_scaleout"
-LOG_ROOT="$SCRIPT_DIR/logs_scaleout"
+RUN_ROOT="$REPO_DIR/runs/scaling/runs_scaleout"
+LOG_ROOT="$REPO_DIR/runs/scaling/logs_scaleout"
 SUMMARY="$SCRIPT_DIR/scaleout.tsv"
 
 MPIRUN="/usr/bin/mpirun.openmpi"
@@ -56,7 +56,7 @@ for cores in "${BUDGETS[@]}"; do
         continue
     fi
 
-    perstep=$(python3 "$SCRIPT_DIR/parse_steps.py" --window 5 "$log_file")
+    perstep=$(python3 "$REPO_DIR/postprocessing/scripts/scaling/parse_steps.py" --window 5 "$log_file")
     nsteps=$(sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log_file" \
              | grep -E '^\[[0-9:.]+\] \[info\] step ' \
              | tail -1 | awk '{print $4}')

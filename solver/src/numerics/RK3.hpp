@@ -71,6 +71,14 @@ public:
                   const Domain& d, Halo& halo, const Field3D* gfn = nullptr,
                   const MixtureEOS* mix = nullptr);
 
+    // MPI five-equation step: like step_5eq, but halo-exchanges the conserved
+    // state AND the three aux fields (Z1, Z2, alpha1) and applies physical BCs
+    // before each RHS evaluation (every RK stage), since the aux flux reads aux
+    // ghosts every stage.
+    void step_mpi_5eq(State& U, FiveEqAux& aux, const Grid& g, const BCSet& bc,
+                      const IdealGas& eos, const ViscousParams& vp, Real dt,
+                      const Domain& d, Halo& halo, const MixtureEOS& mix);
+
     // Build the MPI pseudospectral hyperdissipation operator with the
     // global grid, Cartesian domain, and BC-driven basis mode. Call once
     // before the time loop when ViscousParams::hyper_method ==

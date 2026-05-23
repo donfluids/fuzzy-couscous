@@ -234,7 +234,17 @@ int main(int argc, char** argv) {
             mp.p_in  = c.multifluid.fe_p_in;  mp.p_out  = c.multifluid.fe_p_out;
             mp.u0 = c.multifluid.fe_u0; mp.v0 = c.multifluid.fe_v0; mp.w0 = c.multifluid.fe_w0;
             aux.allocate(c.grid.nx, c.grid.ny, c.grid.nz, U.ng());
-            mf_init_5eq(U, aux, c.grid, mp);
+            if (!c.output.restart_path.empty()) {
+                bool aux_ok = false;
+                read_checkpoint(c.output.restart_path, U, c.grid, &aux, &aux_ok);
+                if (!aux_ok) {
+                    BLAST_WARN("five-equation restart: checkpoint has no aux "
+                               "fields; reinitializing from IC (valid only at t=0)");
+                    mf_init_5eq(U, aux, c.grid, mp);
+                }
+            } else {
+                mf_init_5eq(U, aux, c.grid, mp);
+            }
             mf_fill_aux_bcs(aux, bc);
             apply_bcs(U, bc);
             mixEOS = mp.mixture();
@@ -493,7 +503,7 @@ int main(int argc, char** argv) {
             }
         }
         if (due(t, c.output.checkpoint_dt, next_ckpt_t, step, c.output.checkpoint_every))
-            write_checkpoint(ckpt_path, U, c.grid, t, step);
+            write_checkpoint(ckpt_path, U, c.grid, t, step, five_eq ? &aux : nullptr);
     }
 
     BLAST_INFO("finished: step={} t={}", step, t);

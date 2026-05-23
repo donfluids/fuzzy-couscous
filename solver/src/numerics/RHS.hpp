@@ -67,7 +67,8 @@ Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
 // to get the global one. Same numerics as the serial version.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                        Real cfl, MPI_Comm comm, const Field3D* gfn = nullptr,
-                       const MixtureEOS* mix = nullptr);
+                       const MixtureEOS* mix = nullptr,
+                       const FiveEqAux* aux5 = nullptr);
 Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
                     Real cfl, MPI_Comm comm);
 #endif

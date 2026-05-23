@@ -1,6 +1,7 @@
 #include "io/Restart.hpp"
 
 #include "io/Log.hpp"
+#include "physics/Multifluid.hpp"
 
 #include <hdf5.h>
 
@@ -72,8 +73,25 @@ void unpack_interior(const std::vector<double>& in, Field3D& f) {
 
 }  // namespace
 
+namespace {
+// Write one 3D interior field as a serial dataset.
+void write_field_serial(hid_t file, const char* name, const Field3D& f,
+                        const Grid& g, std::vector<double>& buf) {
+    pack_interior(f, buf);
+    hsize_t dims[3] = { static_cast<hsize_t>(g.nz),
+                        static_cast<hsize_t>(g.ny),
+                        static_cast<hsize_t>(g.nx) };
+    hid_t space = H5Screate_simple(3, dims, nullptr);
+    hid_t dset  = H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, space,
+                             H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
+    H5Dclose(dset);
+    H5Sclose(space);
+}
+}  // namespace
+
 void write_checkpoint(const std::string& path, const State& U, const Grid& g,
-                      Real t, int step) {
+                      Real t, int step, const FiveEqAux* aux) {
     hid_t file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     if (file < 0) {
         BLAST_ERROR("checkpoint: failed to open {} for write", path);
@@ -84,27 +102,33 @@ void write_checkpoint(const std::string& path, const State& U, const Grid& g,
     write_scalar_i(file, "nx",   g.nx);
     write_scalar_i(file, "ny",   g.ny);
     write_scalar_i(file, "nz",   g.nz);
+    write_scalar_i(file, "five_eq", aux ? 1 : 0);
 
     static const char* names[NCONS] = {"rho", "rho_u", "rho_v", "rho_w", "rho_E"};
     std::vector<double> buf;
-    for (int v = 0; v < NCONS; ++v) {
-        pack_interior(U[v], buf);
-        hsize_t dims[3] = { static_cast<hsize_t>(g.nz),
-                            static_cast<hsize_t>(g.ny),
-                            static_cast<hsize_t>(g.nx) };
-        hid_t space = H5Screate_simple(3, dims, nullptr);
-        hid_t dset  = H5Dcreate2(file, names[v], H5T_NATIVE_DOUBLE, space,
-                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 buf.data());
-        H5Dclose(dset);
-        H5Sclose(space);
+    for (int v = 0; v < NCONS; ++v)
+        write_field_serial(file, names[v], U[v], g, buf);
+    if (aux) {
+        write_field_serial(file, "Z1",     aux->Z1, g, buf);
+        write_field_serial(file, "Z2",     aux->Z2, g, buf);
+        write_field_serial(file, "alpha1", aux->a1, g, buf);
     }
     H5Fclose(file);
 }
 
+namespace {
+void read_field_serial(hid_t file, const char* name, Field3D& f,
+                       std::vector<double>& buf) {
+    hid_t dset = H5Dopen2(file, name, H5P_DEFAULT);
+    H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf.data());
+    H5Dclose(dset);
+    unpack_interior(buf, f);
+}
+}  // namespace
+
 CheckpointHeader read_checkpoint(const std::string& path, State& U,
-                                 const Grid& g) {
+                                 const Grid& g, FiveEqAux* aux,
+                                 bool* aux_restored) {
     hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file < 0) {
         throw std::runtime_error("checkpoint: failed to open " + path);
@@ -127,13 +151,18 @@ CheckpointHeader read_checkpoint(const std::string& path, State& U,
 
     static const char* names[NCONS] = {"rho", "rho_u", "rho_v", "rho_w", "rho_E"};
     std::vector<double> buf(static_cast<std::size_t>(g.nx) * g.ny * g.nz);
-    for (int v = 0; v < NCONS; ++v) {
-        hid_t dset = H5Dopen2(file, names[v], H5P_DEFAULT);
-        H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                buf.data());
-        H5Dclose(dset);
-        unpack_interior(buf, U[v]);
+    for (int v = 0; v < NCONS; ++v)
+        read_field_serial(file, names[v], U[v], buf);
+
+    bool restored = false;
+    if (aux && H5Lexists(file, "five_eq", H5P_DEFAULT) > 0
+        && read_scalar_i(file, "five_eq") == 1) {
+        read_field_serial(file, "Z1",     aux->Z1, buf);
+        read_field_serial(file, "Z2",     aux->Z2, buf);
+        read_field_serial(file, "alpha1", aux->a1, buf);
+        restored = true;
     }
+    if (aux_restored) *aux_restored = restored;
     H5Fclose(file);
     return h;
 }
@@ -171,11 +200,45 @@ void write_scalar_i_collective(hid_t file, const char* name, int v,
     H5Sclose(s);
 }
 
+// Collective hyperslab write of one 3D interior field (each rank its subblock).
+void write_field_mpi(hid_t file, const char* name, const Field3D& f,
+                     const hsize_t file_dims[3], const hsize_t mem_dims[3],
+                     const hsize_t file_offset[3], hid_t dxpl,
+                     std::vector<double>& buf) {
+    pack_interior(f, buf);
+    hid_t fspace = H5Screate_simple(3, file_dims, nullptr);
+    hid_t dset = H5Dcreate2(file, name, H5T_NATIVE_DOUBLE, fspace,
+                            H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Sselect_hyperslab(fspace, H5S_SELECT_SET, file_offset, nullptr,
+                        mem_dims, nullptr);
+    hid_t mspace = H5Screate_simple(3, mem_dims, nullptr);
+    H5Dwrite(dset, H5T_NATIVE_DOUBLE, mspace, fspace, dxpl, buf.data());
+    H5Sclose(mspace);
+    H5Dclose(dset);
+    H5Sclose(fspace);
+}
+
+// Collective hyperslab read of one 3D interior field.
+void read_field_mpi(hid_t file, const char* name, Field3D& f,
+                    const hsize_t mem_dims[3], const hsize_t file_offset[3],
+                    hid_t dxpl, std::vector<double>& buf) {
+    hid_t dset = H5Dopen2(file, name, H5P_DEFAULT);
+    hid_t fspace = H5Dget_space(dset);
+    H5Sselect_hyperslab(fspace, H5S_SELECT_SET, file_offset, nullptr,
+                        mem_dims, nullptr);
+    hid_t mspace = H5Screate_simple(3, mem_dims, nullptr);
+    H5Dread(dset, H5T_NATIVE_DOUBLE, mspace, fspace, dxpl, buf.data());
+    H5Sclose(mspace);
+    H5Sclose(fspace);
+    H5Dclose(dset);
+    unpack_interior(buf, f);
+}
+
 }  // namespace
 
 void write_checkpoint(const std::string& path, const State& U,
                       const Grid& global_g, Real t, int step,
-                      const Domain& d) {
+                      const Domain& d, const FiveEqAux* aux) {
     hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
     H5Pset_fapl_mpio(fapl, d.comm(), MPI_INFO_NULL);
     hid_t file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
@@ -191,6 +254,7 @@ void write_checkpoint(const std::string& path, const State& U,
     write_scalar_i_collective(file, "nx",   global_g.nx, d.rank());
     write_scalar_i_collective(file, "ny",   global_g.ny, d.rank());
     write_scalar_i_collective(file, "nz",   global_g.nz, d.rank());
+    write_scalar_i_collective(file, "five_eq", aux ? 1 : 0, d.rank());
 
     const auto off = d.global_offset(global_g);
     hsize_t file_dims[3] = {
@@ -214,25 +278,21 @@ void write_checkpoint(const std::string& path, const State& U,
 
     static const char* names[NCONS] = {"rho", "rho_u", "rho_v", "rho_w", "rho_E"};
     std::vector<double> buf;
-    for (int v = 0; v < NCONS; ++v) {
-        pack_interior(U[v], buf);
-        hid_t fspace = H5Screate_simple(3, file_dims, nullptr);
-        hid_t dset = H5Dcreate2(file, names[v], H5T_NATIVE_DOUBLE, fspace,
-                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Sselect_hyperslab(fspace, H5S_SELECT_SET, file_offset, nullptr,
-                            mem_dims, nullptr);
-        hid_t mspace = H5Screate_simple(3, mem_dims, nullptr);
-        H5Dwrite(dset, H5T_NATIVE_DOUBLE, mspace, fspace, dxpl, buf.data());
-        H5Sclose(mspace);
-        H5Dclose(dset);
-        H5Sclose(fspace);
+    for (int v = 0; v < NCONS; ++v)
+        write_field_mpi(file, names[v], U[v], file_dims, mem_dims, file_offset,
+                        dxpl, buf);
+    if (aux) {
+        write_field_mpi(file, "Z1",     aux->Z1, file_dims, mem_dims, file_offset, dxpl, buf);
+        write_field_mpi(file, "Z2",     aux->Z2, file_dims, mem_dims, file_offset, dxpl, buf);
+        write_field_mpi(file, "alpha1", aux->a1, file_dims, mem_dims, file_offset, dxpl, buf);
     }
     H5Pclose(dxpl);
     H5Fclose(file);
 }
 
 CheckpointHeader read_checkpoint(const std::string& path, State& U,
-                                 const Grid& global_g, const Domain& d) {
+                                 const Grid& global_g, const Domain& d,
+                                 FiveEqAux* aux, bool* aux_restored) {
     hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
     H5Pset_fapl_mpio(fapl, d.comm(), MPI_INFO_NULL);
     hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDONLY, fapl);
@@ -274,18 +334,18 @@ CheckpointHeader read_checkpoint(const std::string& path, State& U,
 
     static const char* names[NCONS] = {"rho", "rho_u", "rho_v", "rho_w", "rho_E"};
     std::vector<double> buf(static_cast<std::size_t>(U.nx()) * U.ny() * U.nz());
-    for (int v = 0; v < NCONS; ++v) {
-        hid_t dset = H5Dopen2(file, names[v], H5P_DEFAULT);
-        hid_t fspace = H5Dget_space(dset);
-        H5Sselect_hyperslab(fspace, H5S_SELECT_SET, file_offset, nullptr,
-                            mem_dims, nullptr);
-        hid_t mspace = H5Screate_simple(3, mem_dims, nullptr);
-        H5Dread(dset, H5T_NATIVE_DOUBLE, mspace, fspace, dxpl, buf.data());
-        H5Sclose(mspace);
-        H5Sclose(fspace);
-        H5Dclose(dset);
-        unpack_interior(buf, U[v]);
+    for (int v = 0; v < NCONS; ++v)
+        read_field_mpi(file, names[v], U[v], mem_dims, file_offset, dxpl, buf);
+
+    bool restored = false;
+    if (aux && H5Lexists(file, "five_eq", H5P_DEFAULT) > 0
+        && read_scalar_i(file, "five_eq") == 1) {
+        read_field_mpi(file, "Z1",     aux->Z1, mem_dims, file_offset, dxpl, buf);
+        read_field_mpi(file, "Z2",     aux->Z2, mem_dims, file_offset, dxpl, buf);
+        read_field_mpi(file, "alpha1", aux->a1, mem_dims, file_offset, dxpl, buf);
+        restored = true;
     }
+    if (aux_restored) *aux_restored = restored;
     H5Pclose(dxpl);
     H5Fclose(file);
     return h;

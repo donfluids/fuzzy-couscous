@@ -173,6 +173,52 @@ void RK3::step_mpi(State& U, const Grid& g, const BCSet& bc, const IdealGas& eos
     state_axpbypcz(U, 1.0 / 3.0, U, 2.0 / 3.0, U1_, 2.0 / 3.0 * dt, k_);
     if (floor) enforce_positivity(U, kRhoFloor, kEintFloor);
 }
+
+void RK3::step_mpi_5eq(State& U, FiveEqAux& aux, const Grid& g, const BCSet& bc,
+                       const IdealGas& eos, const ViscousParams& vp, Real dt,
+                       const Domain& d, Halo& halo, const MixtureEOS& mix) {
+    if (!aux_allocated_) {
+        aux1_.allocate(U.nx(), U.ny(), U.nz(), U.ng());
+        kaux_.allocate(U.nx(), U.ny(), U.nz(), U.ng());
+        aux_allocated_ = true;
+    }
+    scratch_.disable_weno = vp.abv_disable_weno;
+
+    auto eval_rhs = [&](State& Uin, FiveEqAux& auxIn) {
+        halo.exchange(Uin);
+        apply_bcs(Uin, bc, d);
+        halo.exchange(auxIn.Z1); apply_bcs(auxIn.Z1, bc, d);
+        halo.exchange(auxIn.Z2); apply_bcs(auxIn.Z2, bc, d);
+        halo.exchange(auxIn.a1); apply_bcs(auxIn.a1, bc, d);
+        const Field3D* gfn = &auxIn.a1;   // marker (contact sensor skipped for 5eq)
+        compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn, &mix, &auxIn, &kaux_);
+        if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
+            || vp.abv_enabled)
+            add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
+    };
+
+    const Real rf = vp.rho_floor, ef = vp.eint_floor;
+    const Real af = mix.a_floor;
+    const Real zf = 1e-12;
+
+    eval_rhs(U, aux);
+    state_axpby(U1_, 1.0, U, dt, k_);
+    aux_axpby(aux1_, 1.0, aux, dt, kaux_);
+    enforce_5eq_bounds(U1_, aux1_, af, zf);
+    enforce_positivity(U1_, rf, ef);
+
+    eval_rhs(U1_, aux1_);
+    state_axpbypcz(U1_, 3.0 / 4.0, U, 1.0 / 4.0, U1_, dt / 4.0, k_);
+    aux_axpbypcz(aux1_, 3.0 / 4.0, aux, 1.0 / 4.0, aux1_, dt / 4.0, kaux_);
+    enforce_5eq_bounds(U1_, aux1_, af, zf);
+    enforce_positivity(U1_, rf, ef);
+
+    eval_rhs(U1_, aux1_);
+    state_axpbypcz(U, 1.0 / 3.0, U, 2.0 / 3.0, U1_, 2.0 / 3.0 * dt, k_);
+    aux_axpbypcz(aux, 1.0 / 3.0, aux, 2.0 / 3.0, aux1_, 2.0 / 3.0 * dt, kaux_);
+    enforce_5eq_bounds(U, aux, af, zf);
+    enforce_positivity(U, rf, ef);
+}
 #endif
 
 }  // namespace blast

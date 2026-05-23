@@ -178,7 +178,8 @@ int main(int argc, char** argv) {
             if (world_rank == 0) BLAST_ERROR("restart failed: {}", e.what());
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
-    } else {
+    } else if (!(c.multifluid.enabled && c.multifluid.eos == "five_equation")) {
+        // The five-equation IC (mf_init_5eq) fully sets U below; skip the base IC.
         apply_ic_local(U, local_g, global_g, eos, c);
     }
 
@@ -193,6 +194,8 @@ int main(int argc, char** argv) {
     const Field3D* gptr = nullptr;
     MixtureEOS mixEOS;
     const MixtureEOS* mixptr = nullptr;   // JWL only; two-gamma keeps the legacy path
+    FiveEqAux aux;
+    bool five_eq = false;
     if (c.multifluid.enabled) {
         MultifluidParams mp;
         mp.enabled   = true;
@@ -203,6 +206,61 @@ int main(int argc, char** argv) {
         mp.q = c.multifluid.q; mp.rho_e = c.multifluid.rho_e; mp.T_e = c.multifluid.T_e;
         mp.cj_u_frac = c.multifluid.cj_u_frac;
         mp.r0 = c.ic.r0; mp.tanh_thickness = c.ic.tanh_thickness; mp.Y42_amp = c.ic.Y42_amp;
+        if (c.multifluid.eos == "five_equation") {
+            auto set_phase = [](PhaseEOS& ph, const std::string& kind, Real gamma,
+                                Real pinf, Real A, Real B, Real R1, Real R2,
+                                Real omega, Real rho0) {
+                if (kind == "jwl") {
+                    ph.kind = PhaseEOS::JWLPhase;
+                    ph.jwl.A = A; ph.jwl.B = B; ph.jwl.R1 = R1; ph.jwl.R2 = R2;
+                    ph.jwl.omega = omega; ph.jwl.rho0 = rho0;
+                } else {
+                    ph.kind = PhaseEOS::StiffenedGas;
+                    ph.sg.gamma = gamma; ph.sg.pinf = pinf;
+                }
+            };
+            mp.five_eq_mode = true;
+            set_phase(mp.ph[0], c.multifluid.ph1_kind, c.multifluid.ph1_gamma,
+                      c.multifluid.ph1_pinf, c.multifluid.ph1_jwl_A,
+                      c.multifluid.ph1_jwl_B, c.multifluid.ph1_jwl_R1,
+                      c.multifluid.ph1_jwl_R2, c.multifluid.ph1_jwl_omega,
+                      c.multifluid.ph1_jwl_rho0);
+            set_phase(mp.ph[1], c.multifluid.ph2_kind, c.multifluid.ph2_gamma,
+                      c.multifluid.ph2_pinf, c.multifluid.ph2_jwl_A,
+                      c.multifluid.ph2_jwl_B, c.multifluid.ph2_jwl_R1,
+                      c.multifluid.ph2_jwl_R2, c.multifluid.ph2_jwl_omega,
+                      c.multifluid.ph2_jwl_rho0);
+            mp.a1_in = c.multifluid.fe_a1_in; mp.a1_out = c.multifluid.fe_a1_out;
+            mp.rho1  = c.multifluid.fe_rho1;  mp.rho2   = c.multifluid.fe_rho2;
+            mp.p_in  = c.multifluid.fe_p_in;  mp.p_out  = c.multifluid.fe_p_out;
+            mp.u0 = c.multifluid.fe_u0; mp.v0 = c.multifluid.fe_v0; mp.w0 = c.multifluid.fe_w0;
+            aux.allocate(local_g.nx, local_g.ny, local_g.nz, U.ng());
+            if (!c.output.restart_path.empty()) {
+                bool aux_ok = false;
+                read_checkpoint(c.output.restart_path, U, global_g, domain,
+                                &aux, &aux_ok);
+                if (!aux_ok) {
+                    if (world_rank == 0)
+                        BLAST_WARN("five-equation restart: checkpoint has no aux "
+                                   "fields; reinitializing from IC (t=0 only)");
+                    mf_init_5eq(U, aux, local_g, mp);
+                }
+            } else {
+                mf_init_5eq(U, aux, local_g, mp);
+            }
+            mixEOS = mp.mixture();
+            mixptr = &mixEOS;
+            gptr   = &aux.a1;
+            five_eq = true;
+            vp.rho_floor  = 1e-12;
+            vp.eint_floor = 1e-12;
+            if (world_rank == 0)
+                BLAST_INFO("multifluid ON (MPI, five-equation): phase0={} phase1={} "
+                           "a1 in/out={}/{} rho1/rho2={}/{} p in/out={}/{}",
+                           c.multifluid.ph1_kind, c.multifluid.ph2_kind,
+                           mp.a1_in, mp.a1_out, mp.rho1, mp.rho2, mp.p_in, mp.p_out);
+        }
+        if (!five_eq) {
         if (c.multifluid.eos == "jwl") {
             const Real pr = c.multifluid.p_ref, rr = c.multifluid.rho_ref;
             mp.jwl_mode  = true;
@@ -239,12 +297,18 @@ int main(int argc, char** argv) {
                        "T={} vs air gamma={} rho={}",
                        mp.gamma_p, mp.rho_p, mp.T_p, mp.gamma_air, mp.rho_a);
         }
+        }  // end if(!five_eq)
     }
 
     Halo halo(U, domain);
     halo.exchange(U);
     apply_bcs(U, bc, domain);
-    if (gptr) { halo.exchange(Gfield); apply_bcs(Gfield, bc, domain); }
+    if (gptr && !five_eq) { halo.exchange(Gfield); apply_bcs(Gfield, bc, domain); }
+    if (five_eq) {
+        halo.exchange(aux.Z1); apply_bcs(aux.Z1, bc, domain);
+        halo.exchange(aux.Z2); apply_bcs(aux.Z2, bc, domain);
+        halo.exchange(aux.a1); apply_bcs(aux.a1, bc, domain);
+    }
 
     RK3 driver(local_g.nx, local_g.ny, local_g.nz, U.ng());
     if (vp.hyper_method == HyperMethod::Pseudospectral) {
@@ -362,9 +426,9 @@ int main(int argc, char** argv) {
             if (world_rank == 0 && (periodic_spec || slip_spec))
                 writer.append_spectra(h, sp, t, step);
         }
-        // G boundedness / mixing metric (collective: all ranks call the reduce).
+        // G / alpha1 boundedness / mixing metric (collective: all ranks reduce).
         GStats gs{};
-        if (gptr) gs = mf_g_stats(Gfield, N_global, domain.comm());
+        if (gptr) gs = mf_g_stats(five_eq ? aux.a1 : Gfield, N_global, domain.comm());
         if (world_rank == 0) {
             stats_file << std::setw(kStepW) << step
                        << std::scientific << std::setprecision(9);
@@ -386,8 +450,8 @@ int main(int argc, char** argv) {
                        (h.K_sol > 0 ? h.K_dil / h.K_sol : 0.0),
                        s.e_total, e_ratio, e_drift, m_ratio, m_drift, p_imbalance);
             if (gptr)
-                BLAST_INFO("  multifluid G in [{:.4f}, {:.4f}] var={:.3e}",
-                           gs.gmin, gs.gmax, gs.gvar);
+                BLAST_INFO("  multifluid {} in [{:.4f}, {:.4f}] var={:.3e}",
+                           five_eq ? "alpha1" : "G", gs.gmin, gs.gmax, gs.gvar);
         }
     };
 
@@ -412,14 +476,15 @@ int main(int argc, char** argv) {
     Real t = start_time;
     int step = start_step;
     log_diagnostics(step, t, 0.0, /*do_spectra=*/true);
-    writer.write_snapshot(U, global_g, eos, t, step, gptr, mixptr);
+    writer.write_snapshot(U, global_g, eos, t, step, five_eq ? nullptr : gptr, five_eq ? nullptr : mixptr);
 
     const std::string ckpt_path =
         c.output.out_dir + "/" + c.run_name + ".ckpt.h5";
 
     while (t < c.time.t_end && step < c.time.max_steps) {
         Real dt_hyp = max_dt_hyperbolic(U, local_g, eos, c.time.cfl_hyperbolic,
-                                         domain.comm(), gptr, mixptr);
+                                         domain.comm(), gptr, mixptr,
+                                         five_eq ? &aux : nullptr);
         Real dt_vis = (vp.mu > 0.0)
                     ? max_dt_viscous(U, local_g, vp, c.time.cfl_viscous, domain.comm())
                     : 1e30;
@@ -441,8 +506,12 @@ int main(int argc, char** argv) {
             break;
         }
 
-        driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo, gptr, mixptr);
-        if (gptr) mf_advect_G(Gfield, U, local_g, bc, dt, domain, halo);
+        if (five_eq) {
+            driver.step_mpi_5eq(U, aux, local_g, bc, eos, vp, dt, domain, halo, *mixptr);
+        } else {
+            driver.step_mpi(U, local_g, bc, eos, vp, dt, domain, halo, gptr, mixptr);
+            if (gptr) mf_advect_G(Gfield, U, local_g, bc, dt, domain, halo);
+        }
         if (forcing) {
             forcing->evolve_ou(dt);
             forcing->apply(U, local_g, dt, domain.comm());
@@ -459,9 +528,10 @@ int main(int argc, char** argv) {
                                    step, spec_every);
         if (do_stats || do_spec) log_diagnostics(step, t, dt, do_spec);
         if (due(t, c.output.snapshot_dt, next_snap_t, step, c.output.snapshot_every))
-            writer.write_snapshot(U, global_g, eos, t, step, gptr, mixptr);
+            writer.write_snapshot(U, global_g, eos, t, step, five_eq ? nullptr : gptr, five_eq ? nullptr : mixptr);
         if (due(t, c.output.checkpoint_dt, next_ckpt_t, step, c.output.checkpoint_every))
-            write_checkpoint(ckpt_path, U, global_g, t, step, domain);
+            write_checkpoint(ckpt_path, U, global_g, t, step, domain,
+                             five_eq ? &aux : nullptr);
     }
 
     if (world_rank == 0)

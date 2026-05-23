@@ -443,6 +443,94 @@ int run_jwl_bitexact(int K_steps) {
     return fail;
 }
 
+// Five-equation diffuse-interface blast: exercises the in-RK halo exchange of
+// the aux bundle (Z1, Z2, alpha1), the per-stage aux BC dispatch, the derived
+// mixture-mass update, and the non-conservative volume-fraction term across
+// partitions. An overpressured stiffened-gas bubble drives a real flow; serial
+// and MPI must match cell-by-cell (rho, momentum, energy, Z1, Z2, alpha1).
+int run_five_eq_bitexact(int K_steps) {
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    Grid global_g;
+    global_g.nx = global_g.ny = global_g.nz = 32;
+    global_g.lx = global_g.ly = global_g.lz = 1.0;
+    global_g.x0 = global_g.y0 = global_g.z0 = -0.5;
+
+    BCSet bc;
+    bc.xlo = bc.xhi = BCType::SlipWall;
+    bc.ylo = bc.yhi = BCType::SlipWall;
+    bc.zlo = bc.zhi = BCType::SlipWall;
+
+    IdealGas eos{GammaLaw{}};
+    ViscousParams vp; vp.mu = 0.0;
+    vp.rho_floor = 1e-12; vp.eint_floor = 1e-12;
+
+    MultifluidParams mp;
+    mp.enabled = true; mp.five_eq_mode = true;
+    mp.ph[0].kind = PhaseEOS::StiffenedGas; mp.ph[0].sg = {1.4, 0.0};
+    mp.ph[1].kind = PhaseEOS::StiffenedGas; mp.ph[1].sg = {4.4, 6.0};
+    mp.a1_in = 1e-6; mp.a1_out = 1.0 - 1e-6;     // phase-1 bubble in phase-0 ambient
+    mp.rho1 = 1.0; mp.rho2 = 5.0;
+    mp.p_in = 5.0;  mp.p_out = 1.0;              // overpressured bubble -> expansion
+    mp.r0 = 0.15; mp.tanh_thickness = 0.04; mp.Y42_amp = 0.2;
+    const MixtureEOS mix = mp.mixture();
+    const Real cfl = 0.3;
+
+    // ---- MPI path ----
+    Domain dom(MPI_COMM_WORLD, global_g, bc);
+    Grid local_g = dom.local_grid(global_g);
+    State U_mpi(local_g.nx, local_g.ny, local_g.nz);
+    FiveEqAux aux_mpi; aux_mpi.allocate(local_g.nx, local_g.ny, local_g.nz, U_mpi.ng());
+    mf_init_5eq(U_mpi, aux_mpi, local_g, mp);
+    Halo halo(U_mpi, dom);
+    RK3 driver_mpi(local_g.nx, local_g.ny, local_g.nz, U_mpi.ng());
+    for (int s = 0; s < K_steps; ++s) {
+        Real dt = max_dt_hyperbolic(U_mpi, local_g, eos, cfl, dom.comm(),
+                                    &aux_mpi.a1, &mix, &aux_mpi);
+        driver_mpi.step_mpi_5eq(U_mpi, aux_mpi, local_g, bc, eos, vp, dt, dom, halo, mix);
+    }
+    std::vector<double> grho, gmom, ge, gZ1, gZ2, ga1;
+    gather_field_to_rank0(U_mpi[RHO ], global_g, dom, grho);
+    gather_field_to_rank0(U_mpi[RHOU], global_g, dom, gmom);
+    gather_field_to_rank0(U_mpi[RHOE], global_g, dom, ge);
+    gather_field_to_rank0(aux_mpi.Z1,  global_g, dom, gZ1);
+    gather_field_to_rank0(aux_mpi.Z2,  global_g, dom, gZ2);
+    gather_field_to_rank0(aux_mpi.a1,  global_g, dom, ga1);
+
+    int fail = 0;
+    if (rank == 0) {
+        State U_ser(global_g.nx, global_g.ny, global_g.nz);
+        FiveEqAux aux_ser;
+        aux_ser.allocate(global_g.nx, global_g.ny, global_g.nz, U_ser.ng());
+        mf_init_5eq(U_ser, aux_ser, global_g, mp);
+        RK3 driver_ser(global_g.nx, global_g.ny, global_g.nz, U_ser.ng());
+        for (int s = 0; s < K_steps; ++s) {
+            Real dt = max_dt_hyperbolic(U_ser, global_g, eos, cfl, &aux_ser.a1,
+                                        &mix, &aux_ser);
+            driver_ser.step_5eq(U_ser, aux_ser, global_g, bc, eos, vp, dt, mix);
+        }
+        const Real er  = max_abs_error(grho, U_ser[RHO ], global_g);
+        const Real em  = max_abs_error(gmom, U_ser[RHOU], global_g);
+        const Real ee  = max_abs_error(ge,   U_ser[RHOE], global_g);
+        const Real ez1 = max_abs_error(gZ1,  aux_ser.Z1,  global_g);
+        const Real ez2 = max_abs_error(gZ2,  aux_ser.Z2,  global_g);
+        const Real ea  = max_abs_error(ga1,  aux_ser.a1,  global_g);
+        const Real tol = 1e-12;
+        const bool ok = (er < tol && em < tol && ee < tol
+                         && ez1 < tol && ez2 < tol && ea < tol);
+        std::printf("Five-equation blast, K=%d steps, ranks=%d: "
+                    "max|dRho|=%.2e max|dMom|=%.2e max|dE|=%.2e "
+                    "max|dZ1|=%.2e max|dZ2|=%.2e max|dA1|=%.2e %s\n",
+                    K_steps, size, er, em, ee, ez1, ez2, ea,
+                    ok ? "PASS" : "FAIL");
+        if (!ok) fail = 1;
+    }
+    MPI_Bcast(&fail, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    return fail;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -458,6 +546,7 @@ int main(int argc, char** argv) {
         total_fail += run_multifluid_bitexact(15, /*conservative=*/false);
         total_fail += run_multifluid_bitexact(15, /*conservative=*/true);
         total_fail += run_jwl_bitexact(15);
+        total_fail += run_five_eq_bitexact(15);
     }
 
     if (rank == 0)

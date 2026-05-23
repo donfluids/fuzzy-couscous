@@ -698,8 +698,8 @@ Real max_dt_viscous(const State& U, const Grid& g, const ViscousParams& vp,
 #ifdef BLAST_MPI
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                        Real cfl, MPI_Comm comm, const Field3D* gfn,
-                       const MixtureEOS* mix) {
-    Real dt_local = max_dt_hyperbolic(U, g, eos, cfl, gfn, mix);
+                       const MixtureEOS* mix, const FiveEqAux* aux5) {
+    Real dt_local = max_dt_hyperbolic(U, g, eos, cfl, gfn, mix, aux5);
     Real dt_global = dt_local;
     MPI_Allreduce(&dt_local, &dt_global, 1, MPI_DOUBLE, MPI_MIN, comm);
     return dt_global;

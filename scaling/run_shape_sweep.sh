@@ -12,8 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN="$REPO_DIR/solver/build_mpi/blast_les_mpi"
 CFG="$REPO_DIR/solver/examples/scaling_case1_256.toml"
-RUN_ROOT="$SCRIPT_DIR/runs_shapes"
-LOG_ROOT="$SCRIPT_DIR/logs_shapes"
+RUN_ROOT="$REPO_DIR/runs/scaling/runs_shapes"
+LOG_ROOT="$REPO_DIR/runs/scaling/logs_shapes"
 SUMMARY="$SCRIPT_DIR/sweep_shapes.tsv"
 
 MPIRUN="/usr/bin/mpirun.openmpi"
@@ -83,7 +83,7 @@ for cfg in "${CONFIGS[@]}"; do
         continue
     fi
 
-    perstep=$(python3 "$SCRIPT_DIR/parse_steps.py" --window 5 "$log_file")
+    perstep=$(python3 "$REPO_DIR/postprocessing/scripts/scaling/parse_steps.py" --window 5 "$log_file")
     nsteps=$(sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log_file" \
              | grep -E '^\[[0-9:.]+\] \[info\] step ' \
              | tail -1 | awk '{print $4}')

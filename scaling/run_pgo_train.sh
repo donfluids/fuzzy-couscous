@@ -26,7 +26,7 @@ REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd -- "$REPO_DIR"
 
 BUILD_DIR="$REPO_DIR/solver/build_pgo"
-PROFILE_DIR="$SCRIPT_DIR/pgo_profile"
+PROFILE_DIR="$REPO_DIR/runs/scaling/pgo_profile"
 BIN="$BUILD_DIR/blast_les_mpi"
 
 MPIRUN="/usr/bin/mpirun.openmpi"
@@ -56,7 +56,7 @@ cmake --build "$BUILD_DIR" -j 32 --target blast_les_mpi
 # === Phase 2: training runs =================================================
 run_train () {
     local cfg="$1"; local tag="$2"
-    local out_dir="$SCRIPT_DIR/pgo_train_${tag}_out"
+    local out_dir="$REPO_DIR/runs/scaling/pgo_train_${tag}_out"
     rm -rf "$out_dir"; mkdir -p "$out_dir"
     local run_cfg="$out_dir/$(basename -- "$cfg")"
     sed "s|out_dir          = .*|out_dir          = \"$out_dir\"|" "$cfg" > "$run_cfg"

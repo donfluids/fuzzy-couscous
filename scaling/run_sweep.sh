@@ -16,8 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN="$REPO_DIR/solver/build_mpi/blast_les_mpi"
 CFG="$REPO_DIR/solver/examples/scaling_case1_256.toml"
-RUN_ROOT="$SCRIPT_DIR/runs_c${TOTAL_CORES}"
-LOG_ROOT="$SCRIPT_DIR/logs_c${TOTAL_CORES}"
+RUN_ROOT="$REPO_DIR/runs/scaling/runs_c${TOTAL_CORES}"
+LOG_ROOT="$REPO_DIR/runs/scaling/logs_c${TOTAL_CORES}"
 SUMMARY="$SCRIPT_DIR/sweep_summary_c${TOTAL_CORES}.tsv"
 
 # The MPI binary links libmpi_cxx (OpenMPI 4 only) via libhdf5_openmpi, so we
@@ -94,7 +94,7 @@ for cfg in "${CONFIGS[@]}"; do
     # Parse last step number + step-rate from log timestamps.
     # spdlog pattern is [HH:MM:SS.mmm]; we time step 5 -> last step.
     # sed strips ANSI color codes from %^/%$ in the spdlog pattern.
-    perstep=$(python3 "$SCRIPT_DIR/parse_steps.py" --window 5 "$log_file")
+    perstep=$(python3 "$REPO_DIR/postprocessing/scripts/scaling/parse_steps.py" --window 5 "$log_file")
     nsteps=$(sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log_file" \
              | grep -E '^\[[0-9:.]+\] \[info\] step ' \
              | tail -1 | awk '{print $4}')

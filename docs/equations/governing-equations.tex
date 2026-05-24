@@ -21,8 +21,10 @@
 \begin{abstract}
 This document collects every governing equation the \textbf{fuzzy-couscous}
 solver discretizes: the compressible Navier--Stokes system, the inviscid and
-viscous fluxes, the three equations of state (ideal gas, two-$\gamma$ mixture,
-and Jones--Wilkins--Lee), the multifluid marker transport, the LES closure
+viscous fluxes, the equations of state (ideal gas, two-$\gamma$ mixture,
+Jones--Wilkins--Lee, and stiffened gas), the multifluid models (the
+transported-$\gamma$ marker and the five-equation diffuse-interface model), the
+LES closure
 (hyperdissipation, localized artificial diffusivity, Ducros sensor), the
 Besnard--Harlow--Rauenzahn (BHR) variable-density turbulence model, the SSP-RK3
 time integrator, and the diagnostic identities. Each section cites the file that
@@ -114,6 +116,7 @@ p = \frac{\rho e}{G}, \qquad c^2 = \frac{(1+1/G)\,p}{\rho}.
 This is the original variable-density contact model (\code{physics/Multifluid.hpp}).
 
 \subsection{Jones--Wilkins--Lee (JWL) for real high explosives}
+\label{sec:jwl}
 Detonation products (e.g.\ TNT) obey the JWL EOS, which an ideal gas cannot
 represent. With relative volume $V = \rho_0/\rho$ ($\rho_0$ the reference/solid
 density) and Gr\"uneisen coefficient $\omega$,
@@ -154,19 +157,109 @@ $\rho_{\mathrm{CJ}} = \rho_0/(1 - p_{\mathrm{CJ}}/(\rho_0 D^2))$ is the
 Rankine--Hugoniot value, self-consistent with the JWL sound speed at CJ
 ($c_{\mathrm{CJ}} = D - u_{\mathrm{CJ}}$).
 
-\section{Multifluid marker transport}
+\subsection{Stiffened gas}
+The stiffened-gas (Noble--Abel/Tammann) EOS adds a constant stiffness pressure
+$p_\infty$ to the ideal-gas law so that nearly incompressible phases (water,
+condensed explosives) share the same Gr\"uneisen-type closure as a gas:
+\begin{equation}
+p = (\gamma-1)\,\rho e - \gamma\,p_\infty, \qquad
+c^2 = \frac{\gamma\,(p + p_\infty)}{\rho}.
+\end{equation}
+With $p_\infty=0$ this reduces to the ideal gas (the analogue of JWL's $A=B=0$
+reduction), so a stiffened-gas phase doubles as an ideal-gas phase
+(\code{physics/StiffenedGas.hpp}).
+
+\subsection{Five-equation mixture (volume-fraction / Wood rule)}
+\label{sec:eos5eq}
+For the five-equation model (\S\ref{sec:fiveeq}) two phases coexist in each cell
+with volume fraction $\alpha_1$ ($\alpha_2 = 1-\alpha_1$) and partial densities
+$Z_k = \alpha_k\rho_k$. Each phase obeys a Gr\"uneisen split of its
+internal-energy density, $\rho_k e_k = (p + \Phi_k)/(\Gamma_k-1)$, where
+\begin{equation}
+\Gamma_k - 1 =
+\begin{cases} \gamma_k - 1 & \text{stiffened gas} \\ \omega_k & \text{JWL} \end{cases},
+\qquad
+\Phi_k =
+\begin{cases} \gamma_k\,p_{\infty,k} & \text{stiffened gas} \\ -f_k(V_k) & \text{JWL (ref.\ curve, \S\ref{sec:jwl})} \end{cases}.
+\end{equation}
+Summing $\rho e = \sum_k \alpha_k \rho_k e_k$ over the phases gives the
+volume-fraction-averaged (Wood) pressure
+\begin{equation}
+p = \frac{\rho e - \Pi}{S}, \qquad
+S = \sum_k \frac{\alpha_k}{\Gamma_k-1}, \qquad
+\Pi = \sum_k \frac{\alpha_k\,\Phi_k}{\Gamma_k-1},
+\end{equation}
+with $\rho e$ the mixture internal-energy density and $\rho = Z_1+Z_2$. The
+frozen mixture sound speed is the mass-weighted phase average
+\begin{equation}
+c^2 = \sum_k Y_k\,c_k^2, \qquad Y_k = Z_k/\rho,
+\end{equation}
+where $c_k^2$ is the per-phase stiffened-gas/JWL sound speed at the common
+pressure $p$. For stiffened-gas phases $S$ and $\Pi$ are linear in $\alpha_1$ ---
+the property that lets an isolated interface stay pressure-oscillation-free
+(\code{physics/MixtureEOS.hpp}, \code{p\_c\_5eq}).
+
+\section{Multifluid models}
 \label{sec:multifluid}
 
+\subsection{Model taxonomy}
+The solver carries two multifluid models, both single-velocity and
+single-pressure, related by the diffuse-interface hierarchy (Baer--Nunziato's
+seven-equation non-equilibrium system being the full parent):
+\begin{itemize}
+\item \textbf{Transported-$\gamma$ four-equation model} (Shyue 1998;
+  Abgrall \& Karni, JCP 2001): the three conservative hydrodynamic equations of
+  \S\ref{sec:ns} plus \emph{one} advected EOS marker (below). The equation of
+  state is selected per cell by the marker; there are no per-phase masses. This
+  is distinct from the Allaire/Massoni \emph{mass-fraction} four-equation model
+  (two partial masses closed by temperature equilibrium), which this code does
+  not implement.
+\item \textbf{Five-equation diffuse-interface model} (Allaire--Kapila--Massoni
+  2002): velocity- and pressure-equilibrium two-phase flow with two partial-mass
+  equations, mixture momentum and energy, and a volume-fraction transport
+  (\S\ref{sec:fiveeq}).
+\end{itemize}
+The $4\!\to\!5$ transition splits the single mixture mass into the two partial
+masses $\alpha_1\rho_1,\alpha_2\rho_2$ and replaces the transported $\gamma$
+marker by the volume fraction $\alpha_1$.
+
+\subsection{Transported-$\gamma$ marker transport}
 The marker (the two-$\gamma$ field $G$, or the products mass fraction
 $\phi\in[0,1]$ for JWL) is advected with the flow,
 \begin{equation}
 \dpar{(\rho\,\chi)}{t} + \nabla\!\cdot(\rho\,\chi\,\uvec) = 0,
-\qquad \chi \in \{G,\ \phi\}.
+\qquad \chi \in \{G,\ \phi\},
 \end{equation}
+equivalently $\partial\chi/\partial t + \uvec\cdot\nabla\chi = 0$ by continuity.
 The contact is handled either by a gated double-flux (non-oscillatory) or an
 opt-in fully conservative flux (\code{conservative = true}); the latter conserves
 total energy at the cost of small contact oscillations
 (\code{physics/Multifluid.cpp}).
+
+\subsection{Five-equation diffuse-interface model}
+\label{sec:fiveeq}
+The true five-equation system advances the two partial masses, the mixture
+momentum and energy, and the volume fraction:
+\begin{align}
+\dpar{(\alpha_1\rho_1)}{t} + \nabla\!\cdot(\alpha_1\rho_1\,\uvec) &= 0, \\
+\dpar{(\alpha_2\rho_2)}{t} + \nabla\!\cdot(\alpha_2\rho_2\,\uvec) &= 0, \\
+\dpar{(\rho\uvec)}{t} + \nabla\!\cdot\!\left(\rho\uvec\otimes\uvec + p\,\mathbf{I}\right)
+   &= \nabla\!\cdot\boldsymbol{\tau}, \\
+\dpar{(\rho E)}{t} + \nabla\!\cdot\!\left[(\rho E + p)\,\uvec\right]
+   &= \nabla\!\cdot(\boldsymbol{\tau}\cdot\uvec) - \nabla\!\cdot\mathbf{q}, \\
+\dpar{\alpha_1}{t} + \uvec\cdot\nabla\alpha_1 &= 0,
+\end{align}
+with mixture density $\rho = \alpha_1\rho_1 + \alpha_2\rho_2$ and pressure $p$
+from the Wood-rule law (\S\ref{sec:eos5eq}). The non-conservative volume-fraction
+equation is discretized in quasi-conservative form,
+$\partial\alpha_1/\partial t + \nabla\!\cdot(\alpha_1\uvec) = \alpha_1\,\nabla\!\cdot\uvec$,
+using the same face velocities as the conservative fluxes. The two partial-mass
+fluxes reuse the same reconstruction as the mixture-mass flux, so $Z_1+Z_2\equiv
+\rho$ to round-off, and the interface stays pressure/velocity-equilibrium
+(no spurious oscillation at a contact). The state is advanced in lockstep with
+the conserved fields through every SSP-RK3 stage
+(\code{numerics/RHS.cpp}, \code{add\_inviscid\_divergence\_5eq};
+\code{numerics/RK3.cpp}, \code{step\_5eq}/\code{step\_mpi\_5eq}).
 
 \section{LES closure and shock capturing}
 \label{sec:lad}

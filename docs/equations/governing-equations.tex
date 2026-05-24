@@ -68,7 +68,7 @@ $\mathbf{n}_d$ and normal velocity $u_d=\uvec\cdot\mathbf{n}_d$ is
 (\rho E + p)\,u_d
 \end{pmatrix}.
 \end{equation}
-It is evaluated by a hybrid 6th-order central / 5th-order WENO reconstruction in
+It is evaluated by a hybrid 6th-order central / 5th-order WENO reconstruction~\cite{jiang_shu_1996,pirozzoli_2002} in
 flux-difference form with Lax--Friedrichs splitting; the WENO weight is gated by
 the shock sensor of \S\ref{sec:lad} (\code{physics/EulerFlux.hpp},
 \code{numerics/WENO5.hpp}). The flux is EOS-agnostic: $p$ is supplied by
@@ -132,7 +132,7 @@ $c^2 = (\partial p/\partial\rho)_s$. With $A=B=0$ the EOS reduces to an ideal ga
 with $\gamma = 1+\omega$, the hook that lets the mixture dispatcher treat air and
 products uniformly (\code{physics/JWL.hpp}).
 
-The shipped TNT parameter set (LLNL / Dobratz \& Crawford) is:
+The shipped TNT parameter set (LLNL / Dobratz \& Crawford~\cite{dobratz_crawford_1985}) is:
 \begin{center}
 \begin{tabular}{lll}
 \toprule
@@ -171,7 +171,7 @@ reduction), so a stiffened-gas phase doubles as an ideal-gas phase
 
 \subsection{Five-equation mixture (volume-fraction / Wood rule)}
 \label{sec:eos5eq}
-For the five-equation model (\S\ref{sec:fiveeq}) two phases coexist in each cell
+For the five-equation model (\S\ref{sec:fiveeq})~\cite{allaire_2002,murrone_guillard_2005} two phases coexist in each cell
 with volume fraction $\alpha_1$ ($\alpha_2 = 1-\alpha_1$) and partial densities
 $Z_k = \alpha_k\rho_k$. Each phase obeys a Gr\"uneisen split of its
 internal-energy density, $\rho_k e_k = (p + \Phi_k)/(\Gamma_k-1)$, where
@@ -205,17 +205,17 @@ the property that lets an isolated interface stay pressure-oscillation-free
 \subsection{Model taxonomy}
 The solver carries two multifluid models, both single-velocity and
 single-pressure, related by the diffuse-interface hierarchy (Baer--Nunziato's
-seven-equation non-equilibrium system being the full parent):
+seven-equation non-equilibrium system~\cite{baer_nunziato_1986} being the full parent):
 \begin{itemize}
-\item \textbf{Transported-$\gamma$ four-equation model} (Shyue 1998;
-  Abgrall \& Karni, JCP 2001): the three conservative hydrodynamic equations of
+\item \textbf{Transported-$\gamma$ four-equation model}~\cite{shyue_1998,abgrall_karni_2001,karni_1994,abgrall_1996}:
+  the three conservative hydrodynamic equations of
   \S\ref{sec:ns} plus \emph{one} advected EOS marker (below). The equation of
   state is selected per cell by the marker; there are no per-phase masses. This
-  is distinct from the Allaire/Massoni \emph{mass-fraction} four-equation model
-  (two partial masses closed by temperature equilibrium), which this code does
+  is distinct from the \emph{mass-fraction} four-equation model
+  (two partial masses closed by temperature equilibrium~\cite{murrone_guillard_2005}), which this code does
   not implement.
-\item \textbf{Five-equation diffuse-interface model} (Allaire--Kapila--Massoni
-  2002): velocity- and pressure-equilibrium two-phase flow with two partial-mass
+\item \textbf{Five-equation diffuse-interface model}~\cite{allaire_2002,kapila_2001}:
+  velocity- and pressure-equilibrium two-phase flow with two partial-mass
   equations, mixture momentum and energy, and a volume-fraction transport
   (\S\ref{sec:fiveeq}).
 \end{itemize}
@@ -234,12 +234,19 @@ equivalently $\partial\chi/\partial t + \uvec\cdot\nabla\chi = 0$ by continuity.
 The contact is handled either by a gated double-flux (non-oscillatory) or an
 opt-in fully conservative flux (\code{conservative = true}); the latter conserves
 total energy at the cost of small contact oscillations
-(\code{physics/Multifluid.cpp}).
+(\code{physics/Multifluid.cpp}). The double-flux method --- freezing the per-cell
+EOS across the flux stencil so a single-material conservative scheme handles the
+contact without spurious pressure oscillation --- is that of
+Abgrall \& Karni~\cite{abgrall_karni_2001} (building on
+Karni~\cite{karni_1994} and Abgrall~\cite{abgrall_1996}); ``gated'' here denotes
+that it is applied only within a few cells of a contact (bulk cells take the
+cheap shared flux), an implementation optimization rather than a separately
+named scheme.
 
 \subsection{Five-equation diffuse-interface model}
 \label{sec:fiveeq}
-The true five-equation system advances the two partial masses, the mixture
-momentum and energy, and the volume fraction:
+The true five-equation system~\cite{allaire_2002,kapila_2001} advances the two
+partial masses, the mixture momentum and energy, and the volume fraction:
 \begin{align}
 \dpar{(\alpha_1\rho_1)}{t} + \nabla\!\cdot(\alpha_1\rho_1\,\uvec) &= 0, \\
 \dpar{(\alpha_2\rho_2)}{t} + \nabla\!\cdot(\alpha_2\rho_2\,\uvec) &= 0, \\
@@ -275,8 +282,8 @@ The empirical stability invariant is fixed $\nu_{\text{eff}}=\nu_h k_{\max}^2$;
 between resolutions $\nu_h$ scales as $\Delta x^2$ (see the README TGV note).
 
 \subsection{Ducros shock sensor}
-The hybrid central/WENO blend and the artificial diffusivity are gated by the
-Ducros sensor
+The hybrid central/WENO blend~\cite{pirozzoli_2002} and the artificial diffusivity are gated by the
+Ducros sensor~\cite{ducros_1999}
 \begin{equation}
 \theta = \frac{(\nabla\!\cdot\uvec)^2}{(\nabla\!\cdot\uvec)^2 + |\boldsymbol{\omega}|^2 + \varepsilon},
 \end{equation}
@@ -286,7 +293,7 @@ pressure-jump $\tanh$ ramp and a half-width-2 dilation along the face direction
 sharpen the gate (\code{numerics/Ducros.cpp}).
 
 \subsection{Localized artificial diffusivity (LAD)}
-For strong blasts the Cook/Kawai--Lele localized artificial diffusivity adds
+For strong blasts the Cook/Kawai--Lele localized artificial diffusivity~\cite{cook_2007,kawai_lele_2008} adds
 grid-dependent, sensor-localized dissipation to shocks and contacts,
 \begin{equation}
 \mu^\ast = C_\mu\,\rho\,|\nabla^r(\nabla\!\cdot\uvec)|\,\Delta^{r+2},
@@ -299,7 +306,7 @@ density-contact piece; the canonical order is $r=4$ (\code{numerics/ArtificialDi
 \section{BHR variable-density turbulence model}
 \label{sec:bhr}
 
-The Besnard--Harlow--Rauenzahn $k$--$\varepsilon$--$a$--$b$ model runs as an
+The Besnard--Harlow--Rauenzahn~\cite{besnard_1992} $k$--$\varepsilon$--$a$--$b$ model runs as an
 operator-split sub-step alongside the LES hydro. The six primitives are the
 turbulent kinetic energy $k$, its dissipation $\varepsilon$, the turbulent mass
 flux $a_i$, and the density--specific-volume covariance
@@ -329,7 +336,7 @@ the LES resolves the energy.
 \label{sec:rk3}
 
 Time advance uses the three-stage strong-stability-preserving Runge--Kutta
-(SSP-RK3, Gottlieb--Shu) scheme on $\mathbf{U}^n \to \mathbf{U}^{n+1}$ with
+(SSP-RK3, Gottlieb--Shu~\cite{gottlieb_shu_1998}) scheme on $\mathbf{U}^n \to \mathbf{U}^{n+1}$ with
 right-hand side $\mathcal{L}(\mathbf{U})$:
 \begin{align}
 \mathbf{U}^{(1)} &= \mathbf{U}^n + \Delta t\,\mathcal{L}(\mathbf{U}^n),\\
@@ -371,5 +378,99 @@ at slip walls); the internal energy $e_{\text{int}} = \sum(\rho E - \tfrac12\rho
 is accumulated directly so $KE + e_{\text{int}} = e_{\text{total}}$ is a genuine
 consistency check rather than an identity (\code{diagnostics/Statistics.cpp};
 see the README for the conservation-vs-truncation discussion).
+
+\begin{thebibliography}{99}
+
+\bibitem{baer_nunziato_1986}
+M.~R. Baer and J.~W. Nunziato,
+``A two-phase mixture theory for the deflagration-to-detonation transition (DDT)
+in reactive granular materials,''
+\textit{Int.\ J.\ Multiphase Flow} \textbf{12}(6):861--889, 1986.
+
+\bibitem{karni_1994}
+S.~Karni,
+``Multicomponent flow calculations by a consistent primitive algorithm,''
+\textit{J.\ Comput.\ Phys.} \textbf{112}(1):31--43, 1994.
+
+\bibitem{abgrall_1996}
+R.~Abgrall,
+``How to prevent pressure oscillations in multicomponent flow calculations:
+a quasi conservative approach,''
+\textit{J.\ Comput.\ Phys.} \textbf{125}(1):150--160, 1996.
+
+\bibitem{jiang_shu_1996}
+G.-S. Jiang and C.-W. Shu,
+``Efficient implementation of weighted ENO schemes,''
+\textit{J.\ Comput.\ Phys.} \textbf{126}(1):202--228, 1996.
+
+\bibitem{shyue_1998}
+K.-M. Shyue,
+``An efficient shock-capturing algorithm for compressible multicomponent
+problems,''
+\textit{J.\ Comput.\ Phys.} \textbf{142}(1):208--242, 1998.
+
+\bibitem{gottlieb_shu_1998}
+S.~Gottlieb and C.-W. Shu,
+``Total variation diminishing Runge--Kutta schemes,''
+\textit{Math.\ Comp.} \textbf{67}(221):73--85, 1998.
+
+\bibitem{ducros_1999}
+F.~Ducros, V.~Ferrand, F.~Nicoud, C.~Weber, D.~Darracq, C.~Gacherieu, and
+T.~Poinsot,
+``Large-eddy simulation of the shock/turbulence interaction,''
+\textit{J.\ Comput.\ Phys.} \textbf{152}(2):517--549, 1999.
+
+\bibitem{kapila_2001}
+A.~K. Kapila, R.~Menikoff, J.~B. Bdzil, S.~F. Son, and D.~S. Stewart,
+``Two-phase modeling of deflagration-to-detonation transition in granular
+materials: reduced equations,''
+\textit{Phys.\ Fluids} \textbf{13}(10):3002--3024, 2001.
+
+\bibitem{abgrall_karni_2001}
+R.~Abgrall and S.~Karni,
+``Computations of compressible multifluids,''
+\textit{J.\ Comput.\ Phys.} \textbf{169}(2):594--623, 2001.
+
+\bibitem{pirozzoli_2002}
+S.~Pirozzoli,
+``Conservative hybrid compact-WENO schemes for shock-turbulence interaction,''
+\textit{J.\ Comput.\ Phys.} \textbf{178}(1):81--117, 2002.
+
+\bibitem{allaire_2002}
+G.~Allaire, S.~Clerc, and S.~Kokh,
+``A five-equation model for the simulation of interfaces between compressible
+fluids,''
+\textit{J.\ Comput.\ Phys.} \textbf{181}(2):577--616, 2002.
+
+\bibitem{murrone_guillard_2005}
+A.~Murrone and H.~Guillard,
+``A five equation reduced model for compressible two phase flow problems,''
+\textit{J.\ Comput.\ Phys.} \textbf{202}(2):664--698, 2005.
+
+\bibitem{cook_2007}
+A.~W. Cook,
+``Artificial fluid properties for large-eddy simulation of compressible
+turbulent mixing,''
+\textit{Phys.\ Fluids} \textbf{19}(5):055103, 2007.
+
+\bibitem{kawai_lele_2008}
+S.~Kawai and S.~K. Lele,
+``Localized artificial diffusivity scheme for discontinuity capturing on
+curvilinear meshes,''
+\textit{J.\ Comput.\ Phys.} \textbf{227}(22):9498--9526, 2008.
+
+\bibitem{besnard_1992}
+D.~Besnard, F.~H. Harlow, R.~M. Rauenzahn, and C.~Spangler,
+``Turbulence transport equations for variable-density turbulence and their
+relationship to two-field models,''
+Tech.\ Rep.\ LA-12303-MS, Los Alamos National Laboratory, 1992.
+
+\bibitem{dobratz_crawford_1985}
+B.~M. Dobratz and P.~C. Crawford,
+``LLNL Explosives Handbook: Properties of Chemical Explosives and Explosive
+Simulants,''
+Tech.\ Rep.\ UCRL-52997, Lawrence Livermore National Laboratory, 1985.
+
+\end{thebibliography}
 
 \end{document}

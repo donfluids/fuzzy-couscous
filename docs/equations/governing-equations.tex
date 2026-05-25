@@ -324,6 +324,46 @@ grid-dependent, sensor-localized dissipation to shocks and contacts,
 with an analogous artificial mass/contact diffusivity $D^\ast$ for the
 density-contact piece; the canonical order is $r=4$ (\code{numerics/ArtificialDiffusivity.cpp}).
 
+\subsection{Artificial diffusivity for the five-equation interface}
+\label{sec:lad5eq}
+The base LAD above acts on the conserved state only. For the five-equation model
+(\S\ref{sec:fiveeq}) it is extended to the aux fields so the material interface is
+regularized \emph{without} breaking the contact's pressure/velocity equilibrium
+(\code{numerics/ArtificialDiffusivity.cpp}, \code{compute\_lad\_fields\_5eq};
+\code{numerics/RHS.cpp}, \code{add\_rhs\_viscous\_5eq}). Two changes are required.
+First, the contact diffusivity is re-keyed on the \emph{interface} markers rather
+than the mixture density (which can be smooth where $\alpha_1$ jumps),
+\begin{equation}
+D^\ast = C_D\,c_{\mathrm{mix}}\,
+  \max\!\Big(|\nabla^r\alpha_1|,\ \tfrac{|\nabla^r Z_1|}{Z_1},\ \tfrac{|\nabla^r Z_2|}{Z_2}\Big)\,\Delta,
+\end{equation}
+with $c_{\mathrm{mix}}$ the mixture sound speed (consistent with the inviscid
+wave speed $\alpha=|u_d|+c$). Second, the thermal term is disabled
+($\kappa^\ast=0$): the cell-gradient temperature is an ideal-gas reduction that is
+\emph{non-uniform} across a uniform-pressure contact, so a thermal flux keyed on
+it would inject spurious pressure; the bulk/shear terms are retained (they vanish
+at a stationary contact).
+
+The interface is then regularized by a consistent diffusion~\cite{cook_2009}: the
+two partial masses, the volume fraction, \emph{and} the internal-energy density
+$\rho e_{\mathrm{int}}=\rho E-\tfrac12\rho|\uvec|^2$ all diffuse with the
+\emph{same} coefficient and stencil,
+\begin{equation}
+\partial_t q \mathrel{+}= \nabla\!\cdot(D^\ast\nabla q),
+\qquad q\in\{Z_1,\,Z_2,\,\alpha_1,\,\rho e_{\mathrm{int}}\},
+\end{equation}
+with the mixture-mass flux taken as the sum of the partial-mass fluxes (so
+$\rho=Z_1+Z_2$ is preserved) and momentum carried at the local velocity. Because
+the stiffened-gas closure makes $\rho e_{\mathrm{int}}=p\,S(\alpha_1)+\Pi(\alpha_1)$
+\emph{affine} in $\alpha_1$ (\S\ref{sec:eos5eq}), applying the same linear operator
+to $\alpha_1$ and to $\rho e_{\mathrm{int}}$ leaves the state on the manifold
+$p=(\rho e_{\mathrm{int}}-\Pi)/S$ at the \emph{unchanged} $p$: a uniform-$(p,\uvec)$
+interface stays in pressure equilibrium to round-off (exact for stiffened-gas
+phases; approximate for JWL phases, where $\Pi$ is non-linear in the phase
+density). This is verified end-to-end by \code{tests/test\_five\_eq\_abv.cpp}
+(stationary contact: $p$ uniform to $10^{-9}$ while $\alpha_1$ spreads; shock
+crossing an interface with LAD active stays bounded and positive).
+
 \subsection{Robustness: closely-spaced shocks and positivity}
 \label{sec:robustness}
 WENO5-JS~\cite{jiang_shu_1996} assumes \emph{at most one} discontinuity inside its
@@ -542,6 +582,11 @@ R.~Borges, M.~Carmona, B.~Costa, and W.~S. Don,
 ``An improved weighted essentially non-oscillatory scheme for hyperbolic
 conservation laws,''
 \textit{J.\ Comput.\ Phys.} \textbf{227}(6):3191--3211, 2008.
+
+\bibitem{cook_2009}
+A.~W. Cook,
+``Enthalpy diffusion in multicomponent flows,''
+\textit{Phys.\ Fluids} \textbf{21}(5):055109, 2009.
 
 \bibitem{zhang_shu_2010}
 X.~Zhang and C.-W. Shu,

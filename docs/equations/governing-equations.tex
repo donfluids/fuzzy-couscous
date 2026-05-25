@@ -224,6 +224,7 @@ masses $\alpha_1\rho_1,\alpha_2\rho_2$ and replaces the transported $\gamma$
 marker by the volume fraction $\alpha_1$.
 
 \subsection{Transported-$\gamma$ marker transport}
+\label{sec:gammatransport}
 The marker (the two-$\gamma$ field $G$, or the products mass fraction
 $\phi\in[0,1]$ for JWL) is advected with the flow,
 \begin{equation}
@@ -268,6 +269,26 @@ the conserved fields through every SSP-RK3 stage
 (\code{numerics/RHS.cpp}, \code{add\_inviscid\_divergence\_5eq};
 \code{numerics/RK3.cpp}, \code{step\_5eq}/\code{step\_mpi\_5eq}).
 
+\paragraph{Shock capturing for the five-equation system.}
+All five equations --- conservative momentum and energy, the two conservative
+partial masses (with $\rho=Z_1+Z_2$ derived), and the non-conservative volume
+fraction $\alpha_1$ --- are advanced through the \emph{same} shock-capturing
+engine: one Ducros sensor $\theta$ (\S\ref{sec:lad}, dilated $\pm2$ cells along
+the face direction), one hybrid reconstruction that uses 6th-order central
+differencing where $\theta\le0.65$ and 5th-order WENO where $\theta>0.65$, and one
+Lax--Friedrichs split with a \emph{single shared} wave speed
+$\alpha=|u_d|+c$ ($c$ the frozen mixture sound speed). Because every conserved and
+non-conserved quantity sees the same $\alpha$ and the same sensor, the contact
+remains in pressure/velocity equilibrium. Unlike the two-$\gamma$ model
+(\S\ref{sec:gammatransport}) the five-equation model therefore needs \emph{no}
+double-flux: the stiffened-gas mixture closure makes the closure coefficients
+$S$ and $\Pi$ \emph{linear} in $\alpha_1$ (\S\ref{sec:eos5eq}), so the
+volume-fraction-averaged pressure $p=(\rho e-\Pi)/S$ stays uniform across a
+uniform-$(p,\uvec)$ interface --- the sensor sees no jump, WENO is not triggered,
+and the plain conservative flux is already oscillation-free
+(\code{numerics/RHS.cpp}, \code{fill\_flux\_alpha\_5eq} /
+\code{add\_inviscid\_divergence\_5eq}).
+
 \section{LES closure and shock capturing}
 \label{sec:lad}
 
@@ -302,6 +323,53 @@ grid-dependent, sensor-localized dissipation to shocks and contacts,
 \end{equation}
 with an analogous artificial mass/contact diffusivity $D^\ast$ for the
 density-contact piece; the canonical order is $r=4$ (\code{numerics/ArtificialDiffusivity.cpp}).
+
+\subsection{Robustness: closely-spaced shocks and positivity}
+\label{sec:robustness}
+WENO5-JS~\cite{jiang_shu_1996} assumes \emph{at most one} discontinuity inside its
+five-point stencil, so that at least one of its three candidate sub-stencils is
+smooth. Two shocks that approach within roughly a stencil width violate this
+premise: all three smoothness indicators $\beta_0,\beta_1,\beta_2$ become large and
+comparable, the nonlinear weights can no longer isolate a smooth sub-stencil, and
+the scheme loses both its design order and its non-oscillatory property. In the
+worst case a strong expansion trapped between the two shocks drives the
+reconstructed density or internal energy negative, which makes the sound speed
+$c=\sqrt{\gamma p/\rho}$ undefined and poisons the field. The reconstruction here
+is plain WENO5-JS rather than the more robust WENO-Z~\cite{borges_2008} or mapped
+WENO~\cite{henrick_2005}, so this regime is guarded by several explicit
+mechanisms rather than by the reconstruction alone:
+\begin{enumerate}
+\item \textbf{Sensor dilation.} The $\pm2$-cell max-dilation of $\theta$
+  (\S\ref{sec:lad}) forces WENO over the \emph{entire} region spanning both shocks,
+  so the central scheme never rings in the gap between them.
+\item \textbf{Lax--Friedrichs dissipation.} The shocked-face flux carries local LF
+  dissipation with $\alpha=|u_d|+c$, taken as the max over the two adjacent cells;
+  LF is the most dissipative (most robust) split and damps the inter-shock
+  oscillations the reconstruction may generate.
+\item \textbf{Sound-speed guards.} Every $c=\sqrt{\cdot}$ is taken as
+  $\sqrt{\max(\cdot,0)}$ (\code{physics/MixtureEOS.hpp}), so a transient negative
+  $c^2$ cannot inject a NaN before the floors below act.
+\item \textbf{Per-stage positivity floors.} After \emph{each} of the three SSP-RK3
+  stages the state is repaired before the next sound-speed evaluation:
+  \code{enforce\_positivity} floors $\rho$ and the internal energy (guaranteeing
+  $p>0$ independent of the local $\gamma$, \code{core/State.hpp}), and for the
+  five-equation model \code{enforce\_5eq\_bounds} clamps
+  $\alpha_1\in[\alpha_{\mathrm{floor}},1-\alpha_{\mathrm{floor}}]$, keeps
+  $Z_1,Z_2\ge z_{\mathrm{floor}}$, and resets $\rho=Z_1+Z_2$
+  (\code{physics/Multifluid.cpp}). The floors are auto-scaled to the ambient state
+  so resolved physics is untouched; the per-stage clamp count is reported as a
+  diagnostic.
+\item \textbf{LAD backstop.} The localized artificial diffusivity above is an
+  opt-in, tunable dissipation sink that targets exactly the shock and contact
+  cells (with a \code{disable\_weno} ``LAD-only'' mode); its diffusivity also
+  enters the viscous time-step limit, so added robustness stays time-stable.
+\end{enumerate}
+These are floors and added dissipation, not a provably positivity-preserving
+limiter~\cite{zhang_shu_2010}; the reconstruction is also component-wise rather
+than characteristic-wise. In practice the combination keeps shock--shock and
+shock--contact interactions bounded (exercised by the Shu--Osher and
+five-equation shock-bubble tests), at the cost of extra local dissipation where
+shocks crowd together.
 
 \section{BHR variable-density turbulence model}
 \label{sec:bhr}
@@ -347,7 +415,11 @@ right-hand side $\mathcal{L}(\mathbf{U})$:
 \end{align}
 The time step obeys the minimum of a hyperbolic CFL ($\propto \Delta x/(|\uvec|+c)$)
 and a viscous limit; in MPI runs both are reduced with \code{MPI\_Allreduce(MIN)}
-(\code{numerics/RK3.cpp}, \code{numerics/RHS.cpp}).
+(\code{numerics/RK3.cpp}, \code{numerics/RHS.cpp}). Each of the three stages is
+followed by positivity/bounds enforcement (\code{enforce\_positivity}, and for the
+five-equation model \code{enforce\_5eq\_bounds}); this per-stage repair is the
+primary robustness backstop for strong or closely-spaced shocks
+(\S\ref{sec:robustness}).
 
 \section{Diagnostic identities}
 \label{sec:diag}
@@ -447,6 +519,12 @@ A.~Murrone and H.~Guillard,
 ``A five equation reduced model for compressible two phase flow problems,''
 \textit{J.\ Comput.\ Phys.} \textbf{202}(2):664--698, 2005.
 
+\bibitem{henrick_2005}
+A.~K. Henrick, T.~D. Aslam, and J.~M. Powers,
+``Mapped weighted essentially non-oscillatory schemes: achieving optimal order
+near critical points,''
+\textit{J.\ Comput.\ Phys.} \textbf{207}(2):542--567, 2005.
+
 \bibitem{cook_2007}
 A.~W. Cook,
 ``Artificial fluid properties for large-eddy simulation of compressible
@@ -458,6 +536,18 @@ S.~Kawai and S.~K. Lele,
 ``Localized artificial diffusivity scheme for discontinuity capturing on
 curvilinear meshes,''
 \textit{J.\ Comput.\ Phys.} \textbf{227}(22):9498--9526, 2008.
+
+\bibitem{borges_2008}
+R.~Borges, M.~Carmona, B.~Costa, and W.~S. Don,
+``An improved weighted essentially non-oscillatory scheme for hyperbolic
+conservation laws,''
+\textit{J.\ Comput.\ Phys.} \textbf{227}(6):3191--3211, 2008.
+
+\bibitem{zhang_shu_2010}
+X.~Zhang and C.-W. Shu,
+``On positivity-preserving high order discontinuous Galerkin schemes for
+compressible Euler equations on rectangular meshes,''
+\textit{J.\ Comput.\ Phys.} \textbf{229}(23):8918--8934, 2010.
 
 \bibitem{besnard_1992}
 D.~Besnard, F.~H. Harlow, R.~M. Rauenzahn, and C.~Spangler,

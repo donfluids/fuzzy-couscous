@@ -69,6 +69,12 @@ struct RhsScratch {
     bool    five_eq_allocated = false;
     void    allocate_5eq(int nx, int ny, int nz, int ng);
 
+    // Five-equation LAD: per-direction artificial aux fluxes (D d Z1/dx, etc.).
+    // Allocated lazily on first 5eq+LAD use so other modes pay nothing.
+    Field3D fZ1_art, fZ2_art, fa1_art;
+    bool    five_eq_abv_allocated = false;
+    void    allocate_5eq_abv(int nx, int ny, int nz, int ng);
+
     // Hyperdissipation. `lap` holds the first composed Laplacian; `lap2`
     // is the second intermediate for the nabla^6 path and is unused when
     // hyper6_coeff == 0.

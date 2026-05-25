@@ -48,4 +48,12 @@ void RhsScratch::allocate_abv(int nx, int ny, int nz, int ng) {
     abv_allocated = true;
 }
 
+void RhsScratch::allocate_5eq_abv(int nx, int ny, int nz, int ng) {
+    if (five_eq_abv_allocated) return;
+    fZ1_art.resize(nx, ny, nz, ng);
+    fZ2_art.resize(nx, ny, nz, ng);
+    fa1_art.resize(nx, ny, nz, ng);
+    five_eq_abv_allocated = true;
+}
+
 }  // namespace blast

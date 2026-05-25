@@ -51,6 +51,17 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
 void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
                      const ViscousParams& vp, RhsScratch& scratch, State& Rhs);
 
+// Five-equation viscous/LAD contribution. Like add_rhs_viscous but also threads
+// the aux bundle so localized artificial diffusivity regularizes the material
+// interface (Z1, Z2, alpha1) with the pressure-equilibrium-preserving consistent
+// diffusion (see compute_lad_fields_5eq / fill_artificial_flux_dir_5eq). The
+// conserved-variable contribution accumulates into Rhs and the aux contribution
+// into auxRhs (both += onto the inviscid RHS already present).
+void add_rhs_viscous_5eq(const State& U, const FiveEqAux& aux,
+                         const MixtureEOS& mix, const Grid& g,
+                         const IdealGas& eos, const ViscousParams& vp,
+                         RhsScratch& scratch, State& Rhs, FiveEqAux& auxRhs);
+
 // Returns the global maximum stable timestep for the hyperbolic CFL.
 Real max_dt_hyperbolic(const State& U, const Grid& g, const IdealGas& eos,
                        Real cfl, const Field3D* gfn = nullptr,

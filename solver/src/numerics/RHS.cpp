@@ -851,6 +851,119 @@ void add_compact_divergence(const State& Flux, int d, Real inv_dh, State& Rhs) {
     }
 }
 
+// Five-equation artificial (LAD) flux for direction d. On top of the shear/bulk
+// artificial flux (NO thermal term -- kappa = 0 for 5eq) it adds the consistent
+// contact diffusion: the partial masses Z1, Z2 and the volume fraction a1 each
+// diffuse with coefficient D = d_art; the mixture-mass flux is their sum (so
+// rho = Z1+Z2 is preserved), momentum is carried at the local velocity, and the
+// internal-energy density rhoe_int = E - ke diffuses with the SAME D so that a
+// uniform-pressure contact stays in pressure equilibrium (exact for stiffened-gas
+// phases, approximate for JWL phases). Aux fluxes go to fZ1a/fZ2a/fa1a.
+void fill_artificial_flux_dir_5eq(const State& U, const FiveEqAux& aux,
+                                  const CellGradients& G,
+                                  const Field3D& mu_art, const Field3D& beta_art,
+                                  const Field3D& d_art, int d, Real inv_dh,
+                                  State& Flux, Field3D& fZ1a, Field3D& fZ2a,
+                                  Field3D& fa1a) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz();
+    const int lo = -1;
+    const int hi_x = nx + 1;
+    const int hi_y = (ny > 1) ? ny + 1 : ny;
+    const int hi_z = (nz > 1) ? nz + 1 : nz;
+    const int jlo = (ny > 1) ? -1 : 0;
+    const int klo = (nz > 1) ? -1 : 0;
+
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+    const auto& E   = U[RHOE];
+    Field3D& Fr = Flux[RHO]; Field3D& Fu = Flux[RHOU]; Field3D& Fv = Flux[RHOV];
+    Field3D& Fw = Flux[RHOW]; Field3D& FE = Flux[RHOE];
+    Fr.fill(0.0); Fu.fill(0.0); Fv.fill(0.0); Fw.fill(0.0); FE.fill(0.0);
+    fZ1a.fill(0.0); fZ2a.fill(0.0); fa1a.fill(0.0);
+
+    const Index srho = (d == 0 ? 1 : (d == 1 ? rho.ldx() : rho.ldxy()));
+    const Real half_inv = 0.5 * inv_dh;
+    auto zsafe = [](Real x) { return std::isfinite(x) ? x : 0.0; };
+
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = klo; k < hi_z; ++k)
+        for (int j = jlo; j < hi_y; ++j)
+            for (int i = lo; i < hi_x; ++i) {
+                const Real r = rho(i, j, k);
+                CellState C{};
+                C.u = mx(i, j, k) / r;
+                C.v = my(i, j, k) / r;
+                C.w = mz(i, j, k) / r;
+                for (int a = 0; a < 3; ++a)
+                    for (int b = 0; b < 3; ++b) C.dudx[a][b] = G.du[a][b](i, j, k);
+                // No thermal term for the five-equation model (kappa = 0).
+                ViscousFluxVec Gv = artificial_flux(
+                    C, mu_art(i, j, k), beta_art(i, j, k), 0.0, d);
+
+                const Real D = d_art(i, j, k);
+                const Real* z1p = &aux.Z1(i, j, k);
+                const Real* z2p = &aux.Z2(i, j, k);
+                const Real* a1p = &aux.a1(i, j, k);
+                const Real JZ1 = D * (zsafe(z1p[srho]) - zsafe(z1p[-srho])) * half_inv;
+                const Real JZ2 = D * (zsafe(z2p[srho]) - zsafe(z2p[-srho])) * half_inv;
+                const Real Ja1 = D * (zsafe(a1p[srho]) - zsafe(a1p[-srho])) * half_inv;
+                const Real Jrho = JZ1 + JZ2;
+
+                // rhoe_int = E - ke (KE density) at the +/- neighbors, diffused
+                // with the same D to keep p uniform across the composition jump.
+                const Real* Ep  = &E(i, j, k);
+                const Real* rp  = &rho(i, j, k);
+                const Real* mxp = &mx(i, j, k);
+                const Real* myp = &my(i, j, k);
+                const Real* mzp = &mz(i, j, k);
+                auto eint_off = [&](Index o) -> Real {
+                    const Real rr = zsafe(rp[o]);
+                    if (!(rr > 0.0)) return zsafe(Ep[o]);
+                    const Real keo = 0.5 * (zsafe(mxp[o]) * zsafe(mxp[o])
+                                          + zsafe(myp[o]) * zsafe(myp[o])
+                                          + zsafe(mzp[o]) * zsafe(mzp[o])) / rr;
+                    return zsafe(Ep[o]) - keo;
+                };
+                const Real Jeint = D * (eint_off(srho) - eint_off(-srho)) * half_inv;
+
+                const Real ke_sp = 0.5 * (C.u * C.u + C.v * C.v + C.w * C.w);
+
+                fZ1a(i, j, k) = JZ1;
+                fZ2a(i, j, k) = JZ2;
+                fa1a(i, j, k) = Ja1;
+                Fr(i, j, k) = Gv.f[RHO ] + Jrho;
+                Fu(i, j, k) = Gv.f[RHOU] + Jrho * C.u;
+                Fv(i, j, k) = Gv.f[RHOV] + Jrho * C.v;
+                Fw(i, j, k) = Gv.f[RHOW] + Jrho * C.w;
+                FE(i, j, k) = Gv.f[RHOE] + Jrho * ke_sp + Jeint;
+            }
+}
+
+// Compact 2nd-order divergence of the artificial aux fluxes, += into auxRhs
+// (the five-equation analogue of add_compact_divergence for Z1, Z2, a1).
+void add_compact_divergence_aux(const Field3D& fZ1a, const Field3D& fZ2a,
+                                const Field3D& fa1a, int d, Real inv_dh,
+                                FiveEqAux& auxRhs) {
+    const int nx = auxRhs.Z1.nx(), ny = auxRhs.Z1.ny(), nz = auxRhs.Z1.nz();
+    const Real half_inv = 0.5 * inv_dh;
+    const Field3D* fs[3] = {&fZ1a, &fZ2a, &fa1a};
+    Field3D*       rs[3] = {&auxRhs.Z1, &auxRhs.Z2, &auxRhs.a1};
+    for (int v = 0; v < 3; ++v) {
+        const Field3D& F = *fs[v];
+        Field3D&       R = *rs[v];
+        const Index sd = (d == 0 ? 1 : (d == 1 ? F.ldx() : F.ldxy()));
+#pragma omp parallel for collapse(2) schedule(static)
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i) {
+                    const Real* f = &F(i, j, k);
+                    R(i, j, k) += (f[sd] - f[-sd]) * half_inv;
+                }
+    }
+}
+
 void add_viscous_flux_divergence(const State& Flux, int d, Real inv_dh,
                                  State& Rhs) {
     const int nx = Rhs.nx(), ny = Rhs.ny(), nz = Rhs.nz();
@@ -1081,6 +1194,86 @@ void add_rhs_viscous(const State& U, const Grid& g, const IdealGas& eos,
     RhsScratch s;
     s.allocate(U.nx(), U.ny(), U.nz(), U.ng());
     add_rhs_viscous(U, g, eos, vp, s, Rhs);
+}
+
+void add_rhs_viscous_5eq(const State& U, const FiveEqAux& aux,
+                         const MixtureEOS& mix, const Grid& g,
+                         const IdealGas& eos, const ViscousParams& vp,
+                         RhsScratch& scratch, State& Rhs, FiveEqAux& auxRhs) {
+    const bool need_grad = (vp.mu > 0.0) || vp.abv_enabled;
+    if (need_grad) {
+        compute_cell_gradients(U, g, eos,
+                               scratch.prim_u, scratch.prim_v,
+                               scratch.prim_w, scratch.prim_T,
+                               scratch.G);
+    }
+
+    if (vp.mu > 0.0) {
+        State& Flux = scratch.Flux_visc;
+        fill_viscous_flux_dir(U, scratch.G, vp, eos, 0, Flux);
+        add_viscous_flux_divergence(Flux, 0, 1.0 / g.dx(), Rhs);
+        if (U.ny() > 1) {
+            fill_viscous_flux_dir(U, scratch.G, vp, eos, 1, Flux);
+            add_viscous_flux_divergence(Flux, 1, 1.0 / g.dy(), Rhs);
+        }
+        if (U.nz() > 1) {
+            fill_viscous_flux_dir(U, scratch.G, vp, eos, 2, Flux);
+            add_viscous_flux_divergence(Flux, 2, 1.0 / g.dz(), Rhs);
+        }
+    }
+
+    // Localized artificial diffusivity for the five-equation model: 5eq-specific
+    // coefficients (kappa disabled, contact diffusivity keyed on the interface),
+    // applied with the consistent contact diffusion to both the conserved state
+    // and the aux fields (Z1, Z2, a1).
+    if (vp.abv_enabled) {
+        scratch.allocate_abv(U.nx(), U.ny(), U.nz(), U.ng());
+        scratch.allocate_5eq_abv(U.nx(), U.ny(), U.nz(), U.ng());
+        scratch.abv_nu_max = compute_lad_fields_5eq(
+            U, aux, mix, g, vp, scratch.G,
+            scratch.lad_theta, scratch.lad_strain,
+            scratch.mu_art, scratch.beta_art, scratch.kappa_art, scratch.d_art);
+
+        State& Flux = scratch.Flux_visc;
+        const Real idx = 1.0 / g.dx(), idy = 1.0 / g.dy(), idz = 1.0 / g.dz();
+        fill_artificial_flux_dir_5eq(U, aux, scratch.G, scratch.mu_art,
+                                     scratch.beta_art, scratch.d_art, 0, idx, Flux,
+                                     scratch.fZ1_art, scratch.fZ2_art,
+                                     scratch.fa1_art);
+        add_compact_divergence(Flux, 0, idx, Rhs);
+        add_compact_divergence_aux(scratch.fZ1_art, scratch.fZ2_art,
+                                   scratch.fa1_art, 0, idx, auxRhs);
+        if (U.ny() > 1) {
+            fill_artificial_flux_dir_5eq(U, aux, scratch.G, scratch.mu_art,
+                                         scratch.beta_art, scratch.d_art, 1, idy,
+                                         Flux, scratch.fZ1_art, scratch.fZ2_art,
+                                         scratch.fa1_art);
+            add_compact_divergence(Flux, 1, idy, Rhs);
+            add_compact_divergence_aux(scratch.fZ1_art, scratch.fZ2_art,
+                                       scratch.fa1_art, 1, idy, auxRhs);
+        }
+        if (U.nz() > 1) {
+            fill_artificial_flux_dir_5eq(U, aux, scratch.G, scratch.mu_art,
+                                         scratch.beta_art, scratch.d_art, 2, idz,
+                                         Flux, scratch.fZ1_art, scratch.fZ2_art,
+                                         scratch.fa1_art);
+            add_compact_divergence(Flux, 2, idz, Rhs);
+            add_compact_divergence_aux(scratch.fZ1_art, scratch.fZ2_art,
+                                       scratch.fa1_art, 2, idz, auxRhs);
+        }
+    }
+
+    if (vp.hyper_method == HyperMethod::FiniteDifference) {
+        add_rhs_hyperdissipation(U, g, vp.hyper_coeff, scratch.lap, Rhs);
+        add_rhs_hyperdissipation6(U, g, vp.hyper6_coeff,
+                                  scratch.lap, scratch.lap2, Rhs);
+    } else {
+        if (!scratch.spectral_hyper) {
+            scratch.spectral_hyper = std::make_unique<HyperdissipationSpectral>(
+                U.nx(), U.ny(), U.nz(), vp.spectral_bc_mode);
+        }
+        scratch.spectral_hyper->apply(U, g, vp.hyper_coeff, vp.hyper6_coeff, Rhs);
+    }
 }
 
 }  // namespace blast

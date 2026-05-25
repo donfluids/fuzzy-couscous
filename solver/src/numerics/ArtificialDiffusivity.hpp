@@ -9,6 +9,9 @@
 
 namespace blast {
 
+struct FiveEqAux;   // physics/Multifluid.hpp
+struct MixtureEOS;  // physics/MixtureEOS.hpp
+
 // Localized artificial diffusivity (LAD, Kawai & Lele 2008) fields.
 //
 // Each artificial transport coefficient is large only where a high-derivative
@@ -45,5 +48,22 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                         Field3D& theta_src, Field3D& strain_src,
                         Field3D& mu_art, Field3D& beta_art, Field3D& kappa_art,
                         Field3D& d_art);
+
+// Five-equation variant. Differs from compute_lad_fields in two ways:
+//  - kappa_art is zeroed: the cell-gradient temperature is an ideal-gas reduction
+//    that is non-uniform across a uniform-pressure material contact, so a thermal
+//    LAD term keyed on it would inject spurious pressure at the interface.
+//  - the contact diffusivity d_art is keyed on the interface markers (volume
+//    fraction alpha1 and the partial masses Z1, Z2) rather than the mixture
+//    density, since rho can be smooth where alpha1 jumps. Its velocity scale is
+//    the mixture sound speed from MixtureEOS::p_c_5eq.
+// The shear (mu_art) and bulk (beta_art) terms are unchanged (they vanish at a
+// stationary contact). Returns max effective kinematic diffusivity for the CFL.
+Real compute_lad_fields_5eq(const State& U, const FiveEqAux& aux,
+                            const MixtureEOS& mix, const Grid& g,
+                            const ViscousParams& vp, const CellGradients& Grad,
+                            Field3D& theta_src, Field3D& strain_src,
+                            Field3D& mu_art, Field3D& beta_art,
+                            Field3D& kappa_art, Field3D& d_art);
 
 }  // namespace blast

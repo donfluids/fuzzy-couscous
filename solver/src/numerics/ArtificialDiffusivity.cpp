@@ -2,6 +2,8 @@
 
 #include "core/Types.hpp"
 #include "numerics/Stencils.hpp"
+#include "physics/Multifluid.hpp"
+#include "physics/MixtureEOS.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -136,6 +138,120 @@ Real compute_lad_fields(const State& U, const Grid& g, const IdealGas& eos,
                 const Real nu_mom = (mua + std::fabs(bta)) * inv_r;
                 const Real nu_th  = kpa * inv_r / std::max(cp, 1e-30);
                 const Real nu_loc = std::max({nu_mom, nu_th, Da});
+                if (nu_loc > nu_max) nu_max = nu_loc;
+            }
+
+    return nu_max;
+}
+
+Real compute_lad_fields_5eq(const State& U, const FiveEqAux& aux,
+                            const MixtureEOS& mix, const Grid& g,
+                            const ViscousParams& vp, const CellGradients& Grad,
+                            Field3D& theta_src, Field3D& strain_src,
+                            Field3D& mu_art, Field3D& beta_art,
+                            Field3D& kappa_art, Field3D& d_art) {
+    const int nx = U.nx(), ny = U.ny(), nz = U.nz(), ng = U.ng();
+    const auto& rho = U[RHO];
+    const auto& mx  = U[RHOU];
+    const auto& my  = U[RHOV];
+    const auto& mz  = U[RHOW];
+    const auto& E   = U[RHOE];
+
+    const Real dx = g.dx();
+    const Real dy = (ny > 1) ? g.dy() : dx;
+    const Real dz = (nz > 1) ? g.dz() : dx;
+    const Real hbar = std::cbrt(dx * dy * dz);
+    const Real h2   = hbar * hbar;
+
+    // ---- Step 1: theta = div u and strain magnitude |S| on [-3, n+3) -----
+    const int lo1   = -ng + stencil::RADIUS;
+    const int hi1x  = nx + ng - stencil::RADIUS;
+    const int hi1y  = ny + ng - stencil::RADIUS;
+    const int hi1z  = nz + ng - stencil::RADIUS;
+    theta_src.fill(0.0);
+    strain_src.fill(0.0);
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int k = lo1; k < hi1z; ++k)
+        for (int j = lo1; j < hi1y; ++j)
+            for (int i = lo1; i < hi1x; ++i) {
+                const Real d00 = Grad.du[0][0](i, j, k);
+                const Real d11 = Grad.du[1][1](i, j, k);
+                const Real d22 = Grad.du[2][2](i, j, k);
+                theta_src(i, j, k) = d00 + d11 + d22;
+                const Real sxy = 0.5 * (Grad.du[0][1](i, j, k) + Grad.du[1][0](i, j, k));
+                const Real sxz = 0.5 * (Grad.du[0][2](i, j, k) + Grad.du[2][0](i, j, k));
+                const Real syz = 0.5 * (Grad.du[1][2](i, j, k) + Grad.du[2][1](i, j, k));
+                const Real s2  = d00 * d00 + d11 * d11 + d22 * d22
+                               + 2.0 * (sxy * sxy + sxz * sxz + syz * syz);
+                strain_src(i, j, k) = std::sqrt(2.0 * s2);
+            }
+
+    // ---- Step 2: LAD coefficient fields on [-1, n+1) (5eq variant) -------
+    const int r = (vp.abv_r == 4) ? 4 : 2;
+    auto drmag = [&](const Field3D& f, int i, int j, int k) -> Real {
+        const Real* p = &f(i, j, k);
+        Real s = dr_raw_safe(p, 1, r); Real m = s * s;
+        if (ny > 1) { s = dr_raw_safe(p, f.ldx(),  r); m += s * s; }
+        if (nz > 1) { s = dr_raw_safe(p, f.ldxy(), r); m += s * s; }
+        return std::sqrt(m);
+    };
+
+    const int lo2 = -1;
+    const int hx  = nx + 1;
+    const int hy  = (ny > 1) ? ny + 1 : ny;
+    const int hz  = (nz > 1) ? nz + 1 : nz;
+    const int joff = (ny > 1) ? -1 : 0;
+    const int koff = (nz > 1) ? -1 : 0;
+    const Real zf = 1e-12;
+    mu_art.fill(0.0);
+    beta_art.fill(0.0);
+    kappa_art.fill(0.0);   // thermal term disabled for the five-equation model
+    d_art.fill(0.0);
+
+    Real nu_max = 0.0;
+#pragma omp parallel for collapse(2) schedule(static) reduction(max : nu_max)
+    for (int k = koff; k < hz; ++k)
+        for (int j = joff; j < hy; ++j)
+            for (int i = lo2; i < hx; ++i) {
+                const Real rc = rho(i, j, k);
+                if (!std::isfinite(rc) || rc <= 0.0) continue;
+
+                const Real Mth = drmag(theta_src, i, j, k);
+                const Real MS  = drmag(strain_src, i, j, k);
+
+                // Interface sensor: max normalized 2nd-difference of the markers.
+                // alpha1 is already dimensionless; the partial masses are scaled
+                // by their local value. rho can be smooth where alpha1 jumps, so
+                // this fires where the mixture-density sensor would miss.
+                const Real Z1 = aux.Z1(i, j, k);
+                const Real Z2 = aux.Z2(i, j, k);
+                const Real Ma1 = drmag(aux.a1, i, j, k);
+                const Real MZ1 = drmag(aux.Z1, i, j, k) / std::max(Z1, zf);
+                const Real MZ2 = drmag(aux.Z2, i, j, k) / std::max(Z2, zf);
+                const Real Mint = std::max({Ma1, MZ1, MZ2});
+
+                // Mixture sound speed (consistent with the inviscid alpha).
+                const Real ke = 0.5 * (mx(i,j,k)*mx(i,j,k) + my(i,j,k)*my(i,j,k)
+                                     + mz(i,j,k)*mz(i,j,k)) / rc;
+                Real p_mix, c_mix;
+                mix.p_c_5eq(aux.a1(i,j,k), Z1, Z2, rc, E(i,j,k) - ke, p_mix, c_mix);
+                if (!std::isfinite(c_mix) || c_mix < 0.0) c_mix = 0.0;
+
+                const Real th  = theta_src(i, j, k);
+                const Real fsw = (std::isfinite(th) && th < 0.0) ? 1.0 : 0.0;
+
+                const Real mua = vp.abv_cmu   * rc * MS * h2;
+                const Real bta = vp.abv_cbeta * rc * fsw * Mth * h2;
+                // Contact/interface diffusivity (units L^2/T): C_D*c_mix*Mint*h.
+                const Real Da  = vp.abv_cD    * c_mix * Mint * hbar;
+
+                mu_art(i, j, k)   = mua;
+                beta_art(i, j, k) = bta;
+                d_art(i, j, k)    = Da;
+
+                const Real inv_r  = 1.0 / rc;
+                const Real nu_mom = (mua + std::fabs(bta)) * inv_r;
+                const Real nu_loc = std::max(nu_mom, Da);
                 if (nu_loc > nu_max) nu_max = nu_loc;
             }
 

@@ -73,7 +73,7 @@ void RK3::step_5eq(State& U, FiveEqAux& aux, const Grid& g, const BCSet& bc,
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn, &mix, &auxIn, &kaux_);
         if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
             || vp.abv_enabled)
-            add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
+            add_rhs_viscous_5eq(Uin, auxIn, mix, g, eos, vp, scratch_, k_, kaux_);
     };
 
     const Real rf = vp.rho_floor, ef = vp.eint_floor;
@@ -194,7 +194,7 @@ void RK3::step_mpi_5eq(State& U, FiveEqAux& aux, const Grid& g, const BCSet& bc,
         compute_rhs_inviscid(Uin, g, eos, scratch_, k_, gfn, &mix, &auxIn, &kaux_);
         if (vp.mu > 0.0 || vp.hyper_coeff > 0.0 || vp.hyper6_coeff > 0.0
             || vp.abv_enabled)
-            add_rhs_viscous(Uin, g, eos, vp, scratch_, k_);
+            add_rhs_viscous_5eq(Uin, auxIn, mix, g, eos, vp, scratch_, k_, kaux_);
     };
 
     const Real rf = vp.rho_floor, ef = vp.eint_floor;

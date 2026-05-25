@@ -26,6 +26,7 @@ add_executable(unit_tests
     test_five_eq_eos.cpp
     test_five_eq_interface.cpp
     test_five_eq_shock_bubble.cpp
+    test_five_eq_abv.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     blast_core

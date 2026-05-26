@@ -4,6 +4,7 @@ add_executable(unit_tests
     test_stencils.cpp
     test_bc.cpp
     test_advect_smooth.cpp
+    test_order_smooth.cpp
     test_sod_1d.cpp
     test_sedov_3d.cpp
     test_viscous_mms.cpp
